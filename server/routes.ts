@@ -481,7 +481,14 @@ export async function registerRoutes(
     await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS tax_code_type VARCHAR(10)`);
     await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS tax_code_value VARCHAR(50)`);
     await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS technicalspecification TEXT`);
-    console.log("[db] materials vendor/template/tax/techspec columns ensured");
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS subcategory VARCHAR(255)`);
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS product VARCHAR(255)`);
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS dimensions VARCHAR(255)`);
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS finishtype VARCHAR(255)`);
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS metaltype VARCHAR(255)`);
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS brandname VARCHAR(255)`);
+    await query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS modelnumber VARCHAR(255)`);
+    console.log("[db] materials vendor/template/tax/techspec/extra columns ensured");
   } catch (err: unknown) {
     console.warn(
       "[db] Could not ensure materials vendor/template/tax columns:",
@@ -1198,8 +1205,8 @@ export async function registerRoutes(
         );
 
         const result = await query(
-          `INSERT INTO materials (id, name, code, rate, shop_id, unit, category, brandname, modelnumber, subcategory, product, technicalspecification, image, attributes, master_material_id, approved, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now()) RETURNING *`,
+          `INSERT INTO materials (id, name, code, rate, shop_id, unit, category, brandname, modelnumber, subcategory, product, technicalspecification, dimensions, finishtype, metaltype, image, attributes, master_material_id, approved, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now()) RETURNING *`,
           [
             id,
             body.name || null,
@@ -1213,6 +1220,9 @@ export async function registerRoutes(
             body.subCategory || body.subcategory || null,
             body.product || null,
             technicalspecification,
+            body.dimensions || body.Dimensions || null,
+            body.finishtype || body.finishType || body.FinishType || null,
+            body.metaltype || body.metalType || body.MetalType || null,
             body.image || null,
             JSON.stringify(attributes || {}),
             body.masterMaterialId || null,
@@ -1384,18 +1394,10 @@ export async function registerRoutes(
     async (req, res) => {
       try {
         const id = req.params.id;
-        const reason = req.body?.reason || null;
-        await query(
-          "ALTER TABLE shops ADD COLUMN IF NOT EXISTS approved boolean DEFAULT true",
-        );
-        await query(
-          "ALTER TABLE shops ADD COLUMN IF NOT EXISTS approval_reason text",
-        );
-        const result = await query(
-          "UPDATE shops SET approved = false, approval_reason = $2 WHERE id = $1 RETURNING *",
-          [id, reason],
-        );
-        res.json({ shop: result.rows[0] });
+        // Delete associated materials first, then the shop itself
+        await query("DELETE FROM materials WHERE shop_id = $1", [id]);
+        await query("DELETE FROM shops WHERE id = $1", [id]);
+        res.json({ message: "Shop rejected and removed", id });
       } catch (err: unknown) {
         console.error(err as any);
         res.status(500).json({ message: "error" });
@@ -1436,6 +1438,9 @@ export async function registerRoutes(
         "subcategory",
         "product",
         "technicalspecification",
+        "dimensions",
+        "finishtype",
+        "metaltype",
         "image",
       ]) {
         if (body[k] !== undefined) {
@@ -2088,6 +2093,95 @@ export async function registerRoutes(
         try { await query("ROLLBACK"); } catch (rbErr) { console.error("rollback failed", rbErr); }
         console.error("/api/bulk-materials error", err);
         res.status(500).json({ message: "bulk upload failed", error: String(err) });
+      }
+    },
+  );
+
+  // POST /api/bulk-shops - Bulk upload shop rows (admin / software_team / purchase_team)
+  app.post(
+    "/api/bulk-shops",
+    authMiddleware,
+    requireRole("admin", "software_team", "purchase_team"),
+    async (req: Request, res: Response) => {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+
+      if (rows.length === 0) {
+        res.status(400).json({ message: "No rows provided" });
+        return;
+      }
+
+      const createdShops: any[] = [];
+      const skipped: any[] = [];
+      const errors: any[] = [];
+
+      try {
+        await query("BEGIN");
+        // eslint-disable-next-line no-console
+        console.log(`[POST /api/bulk-shops] Processing ${rows.length} rows`);
+
+        for (let i = 0; i < rows.length; i++) {
+          const raw = rows[i] || {};
+          const name = (raw.name || raw.Name || "").toString().trim();
+          const location = (raw.location || raw.Location || "").toString().trim() || null;
+          const city = (raw.city || raw.City || "").toString().trim() || null;
+          const phoneCountryCode = (raw.phoneCountryCode || raw.phone_country_code || "").toString().trim() || "+91";
+          const contactNumber = (raw.contactNumber || raw.contact_number || raw.Phone || "").toString().trim() || null;
+          const state = (raw.state || raw.State || "").toString().trim() || null;
+          const country = (raw.country || raw.Country || "").toString().trim() || "India";
+          const pincode = (raw.pincode || raw.Pincode || raw.Zipcode || "").toString().trim() || null;
+          const gstNo = (raw.gstNo || raw.gst_no || raw.gstno || raw.GST || "").toString().trim() || null;
+          const vendorCategory = (raw.vendorCategory || raw.vendor_category || "").toString().trim() || null;
+
+          if (!name) {
+            skipped.push({ row: i, reason: "missing name" });
+            continue;
+          }
+
+          if (!city) {
+            skipped.push({ row: i, reason: "missing city" });
+            continue;
+          }
+
+          try {
+            const id = randomUUID();
+            const result = await query(
+              `INSERT INTO shops (id, name, location, phonecountrycode, contactnumber, city, state, country, pincode, gstno, vendor_category, owner_id, approved, created_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now()) RETURNING *`,
+              [
+                id,
+                name,
+                location,
+                phoneCountryCode,
+                contactNumber,
+                city,
+                state,
+                country,
+                pincode,
+                gstNo,
+                vendorCategory,
+                (req as any).user.id,
+                false, // Bulk uploaded shops go through approval flow
+              ],
+            );
+            createdShops.push(result.rows[0]);
+          } catch (insertErr) {
+            errors.push({ row: i, error: `Insert error: ${String(insertErr)}` });
+            continue;
+          }
+        }
+
+        await query("COMMIT");
+
+        res.json({
+          message: "Bulk shops uploaded successfully",
+          createdShopsCount: createdShops.length,
+          skipped,
+          errors,
+        });
+      } catch (err) {
+        try { await query("ROLLBACK"); } catch (rbErr) { console.error("rollback failed", rbErr); }
+        console.error("/api/bulk-shops error", err);
+        res.status(500).json({ message: "bulk shop upload failed", error: String(err) });
       }
     },
   );

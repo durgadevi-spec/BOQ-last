@@ -364,8 +364,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const rejectShop = async (id: string, reason?: string | null) => {
     const data = await postJSON(`/shops/${id}/reject`, { reason });
+    // Remove from local approval requests immediately
+    setApprovalRequests((prev) => prev.filter((r: any) => r.id !== id));
+    // Also refresh shops from server
     try { const dd = await getJSON('/shops'); if (dd?.shops) setShops(dd.shops); } catch (e) { console.warn('rejectShop refresh failed', e); }
-    return data?.shop;
+    // Refresh pending approvals list
+    try { const ps = await getJSON('/shops-pending-approval'); if (ps?.shops) setApprovalRequests(ps.shops); } catch (e) { console.warn('rejectShop pending refresh failed', e); }
+    return data;
   };
 
   const approveMaterial = async (id: string, source?: string) => {
