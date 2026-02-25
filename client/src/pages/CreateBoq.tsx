@@ -673,7 +673,7 @@ export default function CreateBom() {
 
   const handleFinalizeProduct = async (boqItemId: string) => {
     try {
-      if (!confirm("This will consolidate all items into a single row with the total amount. Continue?")) return;
+      if (!confirm("Mark this product as finalized?")) return;
 
       const existingItem = boqItems.find(i => i.id === boqItemId);
       if (!existingItem) return;
@@ -687,58 +687,9 @@ export default function CreateBom() {
         }
       }
 
-      const currentStep11Items = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
-      if (currentStep11Items.length === 0) {
-        toast({ title: "Info", description: "No items to finalize" });
-        return;
-      }
-
-      // Calculate totals
-      let totalSupply = 0;
-      let totalInstall = 0;
-
-      if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
-        const result = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
-        totalSupply = result.totalSupply;
-        totalInstall = result.totalInstall;
-      } else {
-        for (let i = 0; i < currentStep11Items.length; i++) {
-          const item = currentStep11Items[i];
-          const itemKey = `${boqItemId}-${i}`;
-          const qty = getEditedValue(itemKey, "qty", item.qty || 0);
-          const sRate = getEditedValue(itemKey, "supply_rate", item.supply_rate || 0);
-          const iRate = getEditedValue(itemKey, "install_rate", item.install_rate || 0);
-          totalSupply += (qty * sRate);
-          totalInstall += (qty * iRate);
-        }
-      }
-
-      // Create single consolidated item
-      const consolidatedItem: Step11Item = {
-        title: tableData.product_name || "Consolidated Product",
-        description: `Consolidated configuration for ${tableData.product_name || "Product"}`,
-        unit: tableData.configBasis?.requiredUnitType || "Sqft", // Use config basis unit if available, else default
-        qty: 1,
-        supply_rate: totalSupply,
-        install_rate: totalInstall,
-        location: "Main Area",
-        s_no: 1
-      };
-
-      // Collect all nested product materials (from Manage Product) for display
-      const allProductMaterials: any[] = [];
-      for (const item of currentStep11Items) {
-        if (Array.isArray(item.step11_items) && item.step11_items.length > 0) {
-          allProductMaterials.push(...item.step11_items);
-        }
-      }
-
       const newTableData = {
         ...tableData,
-        step11_items: [consolidatedItem],
-        is_finalized: true,
-        original_items: currentStep11Items,
-        product_materials: allProductMaterials.length > 0 ? allProductMaterials : undefined,
+        is_finalized: true
       };
 
       // Optimistic update
@@ -747,15 +698,6 @@ export default function CreateBom() {
           ? { ...item, table_data: newTableData }
           : item
       ));
-
-      // Clear edits for this item to avoid confusion
-      setEditedFields(prev => {
-        const next = { ...prev };
-        Object.keys(next).forEach(key => {
-          if (key.startsWith(`${boqItemId}-`)) delete next[key];
-        });
-        return next;
-      });
 
       // API Call
       await apiFetch(`/api/boq-items/${encodeURIComponent(boqItemId)}`, {
@@ -1015,27 +957,33 @@ export default function CreateBom() {
                 : [];
 
               for (const key of keys) {
-                const idxStr = key.substring(key.lastIndexOf("-") + 1);
-                const idx = parseInt(idxStr, 10);
                 const fields = editedFields[key] || {};
 
                 // If this product is engine-based, displayLines are computed + manual items appended.
-                // In that case, edited keys for manual entries will have an index offset by computed.length.
+                const lastDashIndex = key.lastIndexOf("-");
+                const idx = parseInt(key.substring(lastDashIndex + 1), 10);
+
                 if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
                   try {
                     const result = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
                     const computedLen = Array.isArray(result.computed) ? result.computed.length : 0;
-                    if (idx >= computedLen) {
-                      // map to manual step11_items index
+
+                    // If the key is for a manual item (e.g. "itemID-manual-idx")
+                    if (key.includes("-manual-")) {
+                      const parts = key.split("-manual-");
+                      const manualIdx = parseInt(parts[1], 10);
+                      if (step11_items[manualIdx]) {
+                        step11_items[manualIdx] = { ...step11_items[manualIdx], ...fields };
+                      }
+                    } else if (idx >= computedLen) {
+                      // fallback for standard index-based keys
                       const manualIdx = idx - computedLen;
                       if (step11_items[manualIdx]) {
                         step11_items[manualIdx] = { ...step11_items[manualIdx], ...fields };
                       }
-                    } else {
-                      // editing computed rows not supported; skip
                     }
                   } catch (e) {
-                    // fallback: attempt direct mapping if computeBoq fails
+                    // fallback
                     if (step11_items[idx]) step11_items[idx] = { ...step11_items[idx], ...fields };
                   }
                 } else {
@@ -1760,23 +1708,41 @@ export default function CreateBom() {
                         }));
 
                         // Include any manually added step11_items (marked manual=true) so they appear immediately and are editable
-                        const manualStep11 = step11Items.filter((it: any) => it && it.manual).map((it: any, mIdx: number) => {
-                          const qty = Number(it.qty ?? it.requiredQty ?? it.qtyPerSqf ?? 0) || 0;
-                          const sRate = Number(it.supply_rate ?? it.supplyRate ?? 0) || 0;
-                          const iRate = Number(it.install_rate ?? it.installRate ?? 0) || 0;
-                          const itemKey = `${boqItem.id}-manual-${mIdx}`;
+                        const manualStep11 = step11Items.map((it: any, s11Idx: number) => {
+                          if (!it || !it.manual) return null;
+                          const itemKey = `${boqItem.id}-manual-${s11Idx}`;
+
+                          const qty = Number(getEditedValue(itemKey, "qty", it.qty ?? it.requiredQty ?? it.qtyPerSqf ?? 0)) || 0;
+                          const sRate = Number(getEditedValue(itemKey, "supply_rate", it.supply_rate ?? it.supplyRate ?? 0)) || 0;
+                          const iRate = Number(getEditedValue(itemKey, "install_rate", it.install_rate ?? it.installRate ?? 0)) || 0;
+                          const rate = Number(getEditedValue(itemKey, "rate", (sRate + iRate))) || (sRate + iRate);
                           return {
                             ...it,
                             manual: true,
                             itemKey,
-                            qtyPerSqf: it.qtyPerSqf ?? it.qtyPerSqf ?? 0,
+                            qtyPerSqf: it.qtyPerSqf ?? 0,
                             supply_rate: sRate,
                             install_rate: iRate,
-                            amount: Number((qty * (sRate + iRate)) || 0),
+                            amount: Number((qty * rate).toFixed(2)),
                           };
-                        });
+                        }).filter(Boolean);
 
                         displayLines = [...computedLines, ...manualStep11];
+                      } else {
+                        // Manual product or engine product without materialLines
+                        displayLines = step11Items.map((it: any, s11Idx: number) => {
+                          const itemKey = it.itemKey || `${boqItem.id}-${s11Idx}`;
+                          const qty = Number(getEditedValue(itemKey, "qty", it.qty ?? it.requiredQty ?? it.qtyPerSqf ?? 0)) || 0;
+                          const sRate = Number(getEditedValue(itemKey, "supply_rate", it.supply_rate ?? it.supplyRate ?? 0)) || 0;
+                          const iRate = Number(getEditedValue(itemKey, "install_rate", it.install_rate ?? it.installRate ?? 0)) || 0;
+                          const rate = Number(getEditedValue(itemKey, "rate", (sRate + iRate))) || (sRate + iRate);
+                          return {
+                            ...it,
+                            itemKey,
+                            qty, // Reflection of edited qty for the row display
+                            amount: Number((qty * rate).toFixed(2)),
+                          };
+                        });
                       }
 
                       return (
@@ -1854,84 +1820,7 @@ export default function CreateBom() {
                             </div>
                           </div>
 
-                          {/* Expandable original items for finalized products omitted for brevity in engine-based items or preserved for non-engine items */}
-                          {tableData.is_finalized && expandedProductIds.has(boqItem.id) && (() => {
-                            // ... existing logic for finalized expansion ...
-                            // (This part is preserved as is from standard implementation)
-                            const origItems = (tableData.original_items && tableData.original_items.length > 0) ? tableData.original_items : [];
-                            const prodMaterials = (tableData.product_materials && tableData.product_materials.length > 0) ? tableData.product_materials : [];
-                            let nestedMaterials: any[] = [];
-                            if (prodMaterials.length === 0) {
-                              for (const item of step11Items) {
-                                if (Array.isArray(item.step11_items) && item.step11_items.length > 0) {
-                                  nestedMaterials.push(...item.step11_items);
-                                }
-                              }
-                              if (nestedMaterials.length === 0 && origItems.length === 0) {
-                                nestedMaterials = step11Items;
-                              }
-                            }
-                            const allMaterials = prodMaterials.length > 0 ? prodMaterials : nestedMaterials;
-                            const displayItemsOrig = origItems.length > 0 ? origItems : allMaterials;
-                            if (displayItemsOrig.length === 0 && allMaterials.length === 0) return null;
 
-                            return (
-                              <div className="bg-blue-50/50 border-b border-blue-200 px-4 py-3">
-                                {origItems.length > 0 && (
-                                  <>
-                                    <div className="text-xs font-semibold text-blue-700 mb-2">BOQ Items ({origItems.length})</div>
-                                    <div className="overflow-x-auto mb-3">
-                                      <table className="border-collapse text-xs min-w-full">
-                                        <thead>
-                                          <tr className="bg-blue-100/50 border-b border-blue-200">
-                                            <th className="border border-blue-200 px-2 py-1 text-left font-semibold w-10">S.No</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-left font-semibold w-48">Item</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-left font-semibold">Description</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-center font-semibold w-16">Unit</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-center font-semibold w-16">Qty</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-right font-semibold w-24">Supply Rate</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-right font-semibold w-24">Install Rate</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-right font-semibold w-28">Supply Amt</th>
-                                            <th className="border border-blue-200 px-2 py-1 text-right font-semibold w-28">Install Amt</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {origItems.map((origItem: any, origIdx: number) => {
-                                            const oQty = origItem.qty || 0;
-                                            const oSupply = origItem.supply_rate || 0;
-                                            const oInstall = origItem.install_rate || 0;
-                                            return (
-                                              <tr key={origIdx} className="border-b border-blue-100 bg-white/70">
-                                                <td className="border border-blue-200 px-2 py-1 text-center">{origIdx + 1}</td>
-                                                <td className="border border-blue-200 px-2 py-1 font-medium">{origItem.title || "Item"}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-gray-600">{origItem.description || "-"}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-center">{origItem.unit || "pcs"}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-center">{oQty}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-right">₹{oSupply.toFixed(2)}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-right">₹{oInstall.toFixed(2)}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-right bg-blue-50/30">₹{(oQty * oSupply).toFixed(2)}</td>
-                                                <td className="border border-blue-200 px-2 py-1 text-right bg-blue-50/30">₹{(oQty * oInstall).toFixed(2)}</td>
-                                              </tr>
-                                            );
-                                          })}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  </>
-                                )}
-                                {allMaterials.length > 0 && (
-                                  <>
-                                    <div className="text-xs font-semibold text-green-700 mb-2 mt-2">Product Materials ({allMaterials.length})</div>
-                                    <div className="overflow-x-auto">
-                                      <table className="border-collapse text-xs min-w-full">
-                                        {/* ... existing table for materials ... */}
-                                      </table>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            );
-                          })()}
 
                           {/* Items Table */}
                           {expandedProductIds.has(boqItem.id) && (
@@ -1993,7 +1882,14 @@ export default function CreateBom() {
                                           return (
                                             <tr key={itemKey} className="border-b border-gray-100 hover:bg-blue-50/50 text-xs">
                                               <td className="border px-2 py-1 text-center">{itemIdx + 1}</td>
-                                              <td className="border px-2 py-1 font-medium">{step11Item.title}</td>
+                                              <td className="border px-2 py-1 font-medium">
+                                                {step11Item.title}
+                                                {step11Item.manual && (
+                                                  <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 uppercase tracking-tighter">
+                                                    Manual
+                                                  </span>
+                                                )}
+                                              </td>
                                               <td className="border px-2 py-1 text-gray-600">{step11Item.shop_name || "-"}</td>
                                               <td className="border px-2 py-1 text-gray-600 truncate max-w-[200px]" title={description}>{description}</td>
                                               <td className="border px-2 py-1 text-center">{unit}</td>
@@ -2015,13 +1911,20 @@ export default function CreateBom() {
                                         return (
                                           <tr key={itemKey} className="border-b border-gray-100 hover:bg-blue-50/50">
                                             <td className="border px-2 py-1 text-center text-xs">{itemIdx + 1}</td>
-                                            <td className="border px-2 py-1 font-medium text-xs">{step11Item.title || "Item"}</td>
+                                            <td className="border px-2 py-1 font-medium text-xs">
+                                              {step11Item.title || "Item"}
+                                              {step11Item.manual && (
+                                                <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-700 border border-amber-200 uppercase tracking-tighter">
+                                                  Manual
+                                                </span>
+                                              )}
+                                            </td>
                                             <td className="border px-2 py-1 text-gray-600">{step11Item.shop_name || "-"}</td>
                                             <td className="border px-2 py-1">
                                               <textarea
                                                 value={description}
                                                 onChange={(e) => updateEditedField(itemKey, "description", e.target.value)}
-                                                disabled={isVersionSubmitted}
+                                                disabled={isVersionSubmitted || tableData.is_finalized}
                                                 className="w-full border rounded px-1 py-0.5 text-xs min-h-[60px] resize-y focus:ring-1 ring-blue-500 outline-none"
                                                 placeholder="Description"
                                               />
@@ -2031,7 +1934,7 @@ export default function CreateBom() {
                                                 type="text"
                                                 value={unit}
                                                 onChange={(e) => updateEditedField(itemKey, "unit", e.target.value)}
-                                                disabled={isVersionSubmitted}
+                                                disabled={isVersionSubmitted || tableData.is_finalized}
                                                 className="w-full border rounded px-1 py-0.5 text-xs text-center focus:ring-1 ring-blue-500 outline-none"
                                               />
                                             </td>
@@ -2040,7 +1943,7 @@ export default function CreateBom() {
                                                 type="number"
                                                 value={qty}
                                                 onChange={(e) => updateEditedField(itemKey, "qty", parseFloat(e.target.value) || 0)}
-                                                disabled={isVersionSubmitted}
+                                                disabled={isVersionSubmitted || tableData.is_finalized}
                                                 className="w-full border rounded px-1 py-0.5 text-xs text-center font-medium focus:ring-1 ring-blue-500 outline-none"
                                               />
                                             </td>
@@ -2057,7 +1960,7 @@ export default function CreateBom() {
                                                   updateEditedField(itemKey, "supply_rate", v);
                                                   updateEditedField(itemKey, "install_rate", 0);
                                                 }}
-                                                disabled={isVersionSubmitted}
+                                                disabled={isVersionSubmitted || tableData.is_finalized}
                                                 className="w-full border rounded px-1 py-0.5 text-xs text-right focus:ring-1 ring-blue-500 outline-none"
                                                 placeholder="Rate"
                                               />
@@ -2071,7 +1974,7 @@ export default function CreateBom() {
                                                 variant="ghost"
                                                 size="sm"
                                                 className="h-7 w-7 p-0 text-red-600 hover:text-red-800 hover:bg-red-100 font-bold"
-                                                disabled={isVersionSubmitted}
+                                                disabled={isVersionSubmitted || tableData.is_finalized}
                                                 onClick={async () => {
                                                   if (!confirm("Delete this item?")) return;
                                                   try {
@@ -2094,30 +1997,19 @@ export default function CreateBom() {
                                     <tr>
                                       <td colSpan={isEngineBased ? 9 : 8} className="border px-2 py-1.5 text-right uppercase tracking-wider text-[10px] text-gray-500">Total</td>
                                       <td className="border px-2 py-1.5 text-right text-green-700 bg-green-50/50">
-                                        ₹{displayLines.reduce((sum: number, item: any, idx: number) => {
-                                          const ik = item.itemKey || `${boqItem.id}-${idx}`;
-                                          const q = Number(getEditedValue(ik, "qty", item.requiredQty ?? item.qty ?? 0)) || 0;
-                                          const r = Number(getEditedValue(ik, "rate", item.rate ?? item.rateSqft ?? ((item.supply_rate || 0) + (item.install_rate || 0)))) || 0;
-                                          return sum + (q * r);
-                                        }, 0).toLocaleString()}
+                                        ₹{displayLines.reduce((sum: number, item: any) => sum + (Number(item.amount) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                       </td>
                                       <td className="border px-2 py-1.5"></td>
                                     </tr>
                                   </tfoot>
                                 </table>
                               </div>
-                              {isEngineBased && (
+                              {(isEngineBased || step11Items.length > 0) && (
                                 <div className="bg-gray-50 px-4 py-2 flex justify-end border-t border-gray-200">
                                   <div className="flex items-center gap-4">
                                     <span className="text-xs font-bold text-gray-500 uppercase">Rate per {tableData.configBasis?.requiredUnitType || "Unit"}:</span>
                                     <span className="text-sm font-extrabold text-blue-700 border-b-2 border-blue-600">
-                                      ₹{(displayLines.reduce((sum: number, item: any, idx: number) => {
-                                        const ik = item.itemKey || `${boqItem.id}-${idx}`;
-                                        const qty = Number(getEditedValue(ik, "qty", item.requiredQty ?? item.qty ?? 0)) || 0;
-                                        const rate = Number(getEditedValue(ik, "rate", item.rate ?? item.rateSqft ?? ((item.supply_rate || 0) + (item.install_rate || 0)))) || 0;
-                                        const amt = Number(item.amount ?? (qty * rate)) || 0;
-                                        return sum + amt;
-                                      }, 0) / (tableData.targetRequiredQty || 1)).toFixed(2)}
+                                      ₹{(displayLines.reduce((sum: number, item: any) => sum + (Number(item.amount) || 0), 0) / (tableData.targetRequiredQty || (Number(step11Items[0]?.qty) || 1))).toFixed(2)}
                                     </span>
                                   </div>
                                 </div>
@@ -2130,111 +2022,7 @@ export default function CreateBom() {
                   </div>
                 )}
 
-                {
-                  boqItems.length > 0 && (
-                    <div className="mt-6 flex justify-end">
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 w-72 space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">Total Supply:</span>
-                          <span className="font-medium">
-                            ₹
-                            {boqItems
-                              .reduce((sum: number, boqItem: any) => {
-                                let td = boqItem.table_data || {};
-                                if (typeof td === 'string') try { td = JSON.parse(td); } catch (e) { td = {}; }
 
-                                if (td.materialLines && td.targetRequiredQty !== undefined) {
-                                  const result = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-                                  const manualItems = (td.step11_items || []).filter((it: any) => it && it.manual);
-                                  const manualSupply = manualItems.reduce((s: number, val: any, idx: number) => {
-                                    const ik = `${boqItem.id}-manual-${idx}`;
-                                    const q = Number(getEditedValue(ik, "qty", val.qty || 0)) || 0;
-                                    const sR = Number(getEditedValue(ik, "supply_rate", val.supply_rate || 0)) || 0;
-                                    return s + (q * sR);
-                                  }, 0);
-                                  return sum + result.totalSupply + manualSupply;
-                                }
-
-                                const items = td.step11_items || [];
-                                return sum + items.reduce((s: number, val: any, idx: number) => {
-                                  const ik = `${boqItem.id}-${idx}`;
-                                  const q = Number(getEditedValue(ik, "qty", val.qty || 0)) || 0;
-                                  const r = Number(getEditedValue(ik, "rate", (val.rate ?? ((val.supply_rate || 0) + (val.install_rate || 0))))) || 0;
-                                  const sR = Number(getEditedValue(ik, "supply_rate", val.supply_rate || r || 0)) || 0;
-                                  return s + (q * sR);
-                                }, 0);
-                              }, 0)
-                              .toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-600">Total Install:</span>
-                          <span className="font-medium">
-                            ₹
-                            {boqItems
-                              .reduce((sum: number, boqItem: any) => {
-                                let td = boqItem.table_data || {};
-                                if (typeof td === 'string') try { td = JSON.parse(td); } catch (e) { td = {}; }
-
-                                if (td.materialLines && td.targetRequiredQty !== undefined) {
-                                  const result = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-                                  const manualItems = (td.step11_items || []).filter((it: any) => it && it.manual);
-                                  const manualInstall = manualItems.reduce((s: number, val: any, idx: number) => {
-                                    const ik = `${boqItem.id}-manual-${idx}`;
-                                    const q = Number(getEditedValue(ik, "qty", val.qty || 0)) || 0;
-                                    const iR = Number(getEditedValue(ik, "install_rate", val.install_rate || 0)) || 0;
-                                    return s + (q * iR);
-                                  }, 0);
-                                  return sum + result.totalInstall + manualInstall;
-                                }
-
-                                const items = td.step11_items || [];
-                                return sum + items.reduce((s: number, val: any, idx: number) => {
-                                  const ik = `${boqItem.id}-${idx}`;
-                                  const q = Number(getEditedValue(ik, "qty", val.qty || 0)) || 0;
-                                  const iR = Number(getEditedValue(ik, "install_rate", val.install_rate || 0)) || 0;
-                                  return s + (q * iR);
-                                }, 0);
-                              }, 0)
-                              .toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="border-t border-gray-300 my-2 pt-2 flex justify-between font-bold text-base">
-                          <span>Grand Total:</span>
-                          <span>
-                            ₹
-                            {boqItems
-                              .reduce((sum: number, boqItem: any) => {
-                                let td = boqItem.table_data || {};
-                                if (typeof td === 'string') try { td = JSON.parse(td); } catch (e) { td = {}; }
-
-                                if (td.materialLines && td.targetRequiredQty !== undefined) {
-                                  const result = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-                                  const manualItems = (td.step11_items || []).filter((it: any) => it && it.manual);
-                                  const manualAmt = manualItems.reduce((s: number, val: any, idx: number) => {
-                                    const ik = `${boqItem.id}-manual-${idx}`;
-                                    const q = Number(getEditedValue(ik, "qty", val.qty || 0)) || 0;
-                                    const r = Number(getEditedValue(ik, "rate", (val.rate ?? ((val.supply_rate || 0) + (val.install_rate || 0))))) || 0;
-                                    return s + (q * r);
-                                  }, 0);
-                                  return sum + result.grandTotal + manualAmt;
-                                }
-
-                                const items = td.step11_items || [];
-                                return sum + items.reduce((s: number, val: any, idx: number) => {
-                                  const ik = `${boqItem.id}-${idx}`;
-                                  const q = Number(getEditedValue(ik, "qty", val.qty || 0)) || 0;
-                                  const r = Number(getEditedValue(ik, "rate", (val.rate ?? ((val.supply_rate || 0) + (val.install_rate || 0))))) || 0;
-                                  return s + (q * r);
-                                }, 0);
-                              }, 0)
-                              .toFixed(2)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                }
               </CardContent>
             </Card>
           )}

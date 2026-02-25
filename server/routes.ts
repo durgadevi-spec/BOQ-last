@@ -3366,9 +3366,14 @@ export async function registerRoutes(
             console.warn(`[save-edits] Invalid edit key format: ${key}`);
             continue;
           }
-          const boqItemId = key.substring(0, lastDashIndex).trim();
+          let boqItemId = key.substring(0, lastDashIndex).trim();
           const itemIdxStr = key.substring(lastDashIndex + 1);
           const itemIdx = parseInt(itemIdxStr, 10);
+
+          // If the key contains "-manual", strip it to find the real boqItemId
+          if (boqItemId.endsWith("-manual")) {
+            boqItemId = boqItemId.substring(0, boqItemId.length - 7);
+          }
 
           if (!editsByItem[boqItemId]) editsByItem[boqItemId] = {};
           editsByItem[boqItemId][itemIdx] = fields;

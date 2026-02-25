@@ -11,7 +11,7 @@ import {
 import apiFetch from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
-type MaterialTemplate = {
+type Material = {
   id: string;
   name: string;
   code: string;
@@ -20,12 +20,15 @@ type MaterialTemplate = {
   vendor_category?: string;
   tax_code_type?: string;
   tax_code_value?: string;
+  shop_name?: string;
+  unit?: string;
+  rate?: number;
   created_at: string;
   updated_at: string;
 };
 
 type MaterialPickerProps = {
-  onSelectTemplate: (template: MaterialTemplate) => void;
+  onSelectTemplate: (material: Material) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 };
@@ -35,36 +38,36 @@ export default function MaterialPicker({
   open,
   onOpenChange,
 }: MaterialPickerProps) {
-  const [templates, setTemplates] = useState<MaterialTemplate[]>([]);
-  const [filteredTemplates, setFilteredTemplates] = useState<MaterialTemplate[]>([]);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [filteredMaterials, setFilteredMaterials] = useState<Material[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Load all material templates on mount
+  // Load all materials on mount
   useEffect(() => {
-    const loadTemplates = async () => {
+    const loadMaterials = async () => {
       try {
-        const response = await apiFetch("/api/material-templates", {
+        const response = await apiFetch("/api/materials", {
           headers: {},
         });
         if (response.ok) {
           const data = await response.json();
-          const templateList = data.templates || [];
-          setTemplates(templateList);
-          setFilteredTemplates(templateList);
+          const materialList = data.materials || [];
+          setMaterials(materialList);
+          setFilteredMaterials(materialList);
         } else {
           toast({
             title: "Error",
-            description: "Failed to load material templates",
+            description: "Failed to load materials",
             variant: "destructive",
           });
         }
       } catch (err) {
-        console.error("Failed to load material templates:", err);
+        console.error("Failed to load materials:", err);
         toast({
           title: "Error",
-          description: "Failed to load material templates",
+          description: "Failed to load materials",
           variant: "destructive",
         });
       } finally {
@@ -73,58 +76,58 @@ export default function MaterialPicker({
     };
 
     if (open) {
-      loadTemplates();
+      loadMaterials();
     }
   }, [open, toast]);
 
-  // Filter templates based on search query
+  // Filter materials based on search query
   useEffect(() => {
     if (!searchQuery.trim()) {
-      setFilteredTemplates(templates);
+      setFilteredMaterials(materials);
       return;
     }
 
     const query = searchQuery.toLowerCase();
-    const filtered = templates.filter((template) => {
-      const name = template.name?.toLowerCase() || "";
-      const code = template.code?.toLowerCase() || "";
-      const category = template.category?.toLowerCase() || "";
-      const subcategory = template.subcategory?.toLowerCase() || "";
-      const vendorCategory = template.vendor_category?.toLowerCase() || "";
+    const filtered = materials.filter((material) => {
+      const name = material.name?.toLowerCase() || "";
+      const code = material.code?.toLowerCase() || "";
+      const category = material.category?.toLowerCase() || "";
+      const subcategory = material.subcategory?.toLowerCase() || "";
+      const shopName = material.shop_name?.toLowerCase() || "";
 
       return (
         name.includes(query) ||
         code.includes(query) ||
         category.includes(query) ||
         subcategory.includes(query) ||
-        vendorCategory.includes(query)
+        shopName.includes(query)
       );
     });
 
-    setFilteredTemplates(filtered);
-  }, [searchQuery, templates]);
+    setFilteredMaterials(filtered);
+  }, [searchQuery, materials]);
 
-  const handleTemplateSelect = (template: MaterialTemplate) => {
-    onSelectTemplate(template);
+  const handleMaterialSelect = (material: Material) => {
+    onSelectTemplate(material);
     onOpenChange(false);
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Select Material Template</DialogTitle>
+          <DialogTitle>Select Material</DialogTitle>
           <p className="text-sm text-muted-foreground">
-            Choose a material template to add to your BOQ
+            Choose a material from a shop to add to your BOQ
           </p>
         </DialogHeader>
 
         <div className="space-y-4">
           <div>
-            <Label htmlFor="template-search">Search Material Templates</Label>
+            <Label htmlFor="material-search">Search Materials</Label>
             <Input
-              id="template-search"
-              placeholder="Search by template name, code, category..."
+              id="material-search"
+              placeholder="Search by name, code, shop, category..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="mt-2"
@@ -132,48 +135,64 @@ export default function MaterialPicker({
           </div>
 
           {loading ? (
-            <div className="text-center py-8">Loading material templates...</div>
-          ) : filteredTemplates.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground flex flex-col items-center gap-2">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+              <span>Loading materials...</span>
+            </div>
+          ) : filteredMaterials.length === 0 ? (
             <div className="text-center text-gray-500 py-8">
-              {templates.length === 0
-                ? "No material templates available"
-                : "No material templates match your search"}
+              {materials.length === 0
+                ? "No materials available"
+                : "No materials match your search"}
             </div>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {filteredTemplates.map((template) => (
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
+              {filteredMaterials.map((material) => (
                 <Button
-                  key={template.id}
+                  key={material.id}
                   variant="outline"
-                  onClick={() => handleTemplateSelect(template)}
-                  className="w-full justify-start h-auto py-3 px-4"
+                  onClick={() => handleMaterialSelect(material)}
+                  className="w-full justify-start h-auto py-3 px-4 hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
                 >
-                  <div className="text-left space-y-1">
-                    <div className="font-semibold">{template.name}</div>
-                    <div className="text-xs text-gray-500">
-                      Code: {template.code}
-                      {template.category && ` • ${template.category}`}
-                      {template.subcategory && ` → ${template.subcategory}`}
+                  <div className="text-left w-full">
+                    <div className="flex justify-between items-start">
+                      <div className="font-bold text-gray-900">{material.name}</div>
+                      <div className="text-[10px] font-mono bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">
+                        {material.code}
+                      </div>
                     </div>
-                    {template.vendor_category && (
-                      <div className="text-xs text-gray-600">
-                        Vendor: {template.vendor_category}
+
+                    <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+                      {material.shop_name && (
+                        <div className="text-xs font-semibold text-blue-700 flex items-center">
+                          <span className="w-2 h-2 rounded-full bg-blue-500 mr-1.5"></span>
+                          {material.shop_name}
+                        </div>
+                      )}
+                      {material.category && (
+                        <div className="text-[11px] text-gray-500">
+                          {material.category} {material.subcategory && ` → ${material.subcategory}`}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-100 italic">
+                      <div className="text-[11px] text-gray-500">
+                        {material.unit || "unit"}
                       </div>
-                    )}
-                    {(template.tax_code_type || template.tax_code_value) && (
-                      <div className="text-xs text-gray-600">
-                        Tax: {template.tax_code_type} {template.tax_code_value}
+                      <div className="font-extrabold text-green-700">
+                        ₹{Number(material.rate || 0).toLocaleString()}
                       </div>
-                    )}
+                    </div>
                   </div>
                 </Button>
               ))}
             </div>
           )}
 
-          {filteredTemplates.length > 0 && (
-            <div className="text-xs text-gray-500 text-center">
-              Showing {filteredTemplates.length} of {templates.length} material templates
+          {filteredMaterials.length > 0 && (
+            <div className="text-[10px] text-gray-400 text-center uppercase tracking-widest">
+              Showing {filteredMaterials.length} of {materials.length} available materials
             </div>
           )}
         </div>

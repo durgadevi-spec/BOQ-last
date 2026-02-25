@@ -220,14 +220,17 @@ export default function FinalizeBoq() {
 
       if (td.materialLines && td.targetRequiredQty !== undefined) {
         const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-        itemTotal = res.grandTotal;
+        const currentStep11Items = Array.isArray(td.step11_items) ? td.step11_items : [];
+        const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
+          s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
+        itemTotal = res.grandTotal + manualTotal;
         itemQty = td.targetRequiredQty;
         itemRate = itemQty > 0 ? itemTotal / itemQty : 0;
       } else {
-        const step11Items = Array.isArray(td.step11_items) ? td.step11_items : [];
-        itemTotal = step11Items.reduce((s: number, it: any) =>
+        const currentStep11Items = Array.isArray(td.step11_items) ? td.step11_items : [];
+        itemTotal = currentStep11Items.reduce((s: number, it: any) =>
           s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-        itemQty = step11Items[0]?.qty || 0;
+        itemQty = currentStep11Items[0]?.qty || 0;
         itemRate = itemQty > 0 ? itemTotal / itemQty : itemTotal;
       }
 
@@ -248,7 +251,19 @@ export default function FinalizeBoq() {
           accumulator = 0;
           totals[idx] += currentItemRunningTotal;
         } else {
-          const val = parseFloat(customColumnValues[item.id]?.[0]?.[col.name] || "0") || 0;
+          // Dynamic calculation for percentage columns based on Total Value
+          let val = 0;
+          const itemCol = (customColumns[item.id] || []).find(c => c.name === col.name) || col;
+          if (itemCol.isPercentage && itemCol.baseSource === "Total Value (₹)") {
+            val = (itemRate * displayQty) * (itemCol.percentageValue / 100);
+          } else if (itemCol.isPercentage && itemCol.baseSource && itemCol.baseSource !== "manual") {
+            // Chained percentage calculation
+            const baseValStr = customColumnValues[item.id]?.[0]?.[itemCol.baseSource] || "0";
+            const baseVal = parseFloat(baseValStr) || 0;
+            val = baseVal * (itemCol.percentageValue / 100);
+          } else {
+            val = parseFloat(customColumnValues[item.id]?.[0]?.[col.name] || "0") || 0;
+          }
           accumulator += val;
           totals[idx] += val;
         }
@@ -256,7 +271,7 @@ export default function FinalizeBoq() {
     });
 
     return { totals, totalValueSum, totalRateSum, totalQtySum };
-  }, [boqItems, allCols, customColumnValues]);
+  }, [boqItems, allCols, customColumnValues, productQuantities]);
 
   const handleColumnReorder = async (newOrder: typeof allCols) => {
     // Optimistically update local state for all items
@@ -1992,9 +2007,12 @@ export default function FinalizeBoq() {
                           try { tableData = JSON.parse(tableData); } catch { tableData = {}; }
                         }
 
-                        const productName = tableData.product_name || boqItem.estimator || "—";
+                        const currentStep11Items: Step11Item[] = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
+                        const derivedProductName = tableData.product_name || boqItem.estimator || "—";
+                        const productName = (derivedProductName === "Manual Product" || derivedProductName === "Manual" || boqItem.estimator === "manual_product" || boqItem.estimator === "Manual")
+                          ? (currentStep11Items[0]?.title || currentStep11Items[0]?.description || derivedProductName)
+                          : derivedProductName;
                         const category = tableData.category || "";
-                        const step11Items: Step11Item[] = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
                         const isSelected = selectedProductIds.has(boqItem.id);
 
                         // Compute totals
@@ -2002,16 +2020,18 @@ export default function FinalizeBoq() {
                         let rateSqft = 0;
                         if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
                           const result = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
-                          total = result.grandTotal;
+                          const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
+                            s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
+                          total = result.grandTotal + manualTotal;
                           rateSqft = tableData.targetRequiredQty > 0 ? total / tableData.targetRequiredQty : 0;
                         } else {
-                          total = step11Items.reduce((s: number, it: any) =>
+                          total = currentStep11Items.reduce((s: number, it: any) =>
                             s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-                          rateSqft = (step11Items[0]?.qty ?? 0) > 0 ? total / (step11Items[0]?.qty || 1) : total;
+                          rateSqft = (currentStep11Items[0]?.qty ?? 0) > 0 ? total / (currentStep11Items[0]?.qty || 1) : total;
                         }
 
                         const manualDesc = productDescriptions[boqItem.id] ?? (
-                          tableData.subcategory || step11Items[0]?.description || category || ""
+                          tableData.subcategory || currentStep11Items[0]?.description || category || ""
                         );
 
                         return (
@@ -2069,7 +2089,7 @@ export default function FinalizeBoq() {
                             <td className="border-r px-4 py-3 text-center font-black text-gray-800 align-middle min-w-[130px]">
                               <input
                                 type="number"
-                                value={productQuantities[boqItem.id] ?? (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (step11Items[0]?.qty || 0))}
+                                value={productQuantities[boqItem.id] ?? (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (currentStep11Items[0]?.qty || 0))}
                                 disabled={isVersionSubmitted}
                                 onChange={e => setProductQuantities(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
                                 onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, productQuantities[boqItem.id])}
@@ -2078,11 +2098,15 @@ export default function FinalizeBoq() {
                               />
                             </td>
                             <td className="border-r px-4 py-3 text-right font-black text-green-700 bg-green-50/20 align-middle">
-                              ₹{(rateSqft * (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (step11Items[0]?.qty || 0)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              ₹{(rateSqft * (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? Number(tableData.targetRequiredQty) : Number(currentStep11Items[0]?.qty || 0)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
                             {/* Custom columns */}
                             {(() => {
-                              let itemTotal = total;
+                              const manualQtyStr = productQuantities[boqItem.id];
+                              const displayQty = manualQtyStr !== undefined ? (parseFloat(manualQtyStr) || 0) : (tableData.targetRequiredQty || currentStep11Items[0]?.qty || 0);
+                              const baseTotalValue = rateSqft * displayQty;
+
+                              let itemTotal = baseTotalValue;
                               let accumulator = 0;
                               return allCols.map((col, idx) => {
                                 if (col.isTotal) {
@@ -2094,12 +2118,21 @@ export default function FinalizeBoq() {
                                     </td>
                                   );
                                 } else {
-                                  const val = customColumnValues[boqItem.id]?.[0]?.[col.name] || "";
-                                  accumulator += parseFloat(val) || 0;
-
                                   const itemColList = customColumns[boqItem.id] || [];
                                   const itemCol = itemColList.find((c: any) => c.name === col.name) || col;
                                   const isCalculated = (itemCol as any).isPercentage && (itemCol as any).baseSource && (itemCol as any).baseSource !== "manual";
+
+                                  let val = "0";
+                                  if (isCalculated && (itemCol as any).baseSource === "Total Value (₹)") {
+                                    val = (baseTotalValue * ((itemCol as any).percentageValue / 100)).toFixed(2);
+                                  } else if (isCalculated && (itemCol as any).baseSource) {
+                                    const baseValStr = customColumnValues[boqItem.id]?.[0]?.[(itemCol as any).baseSource] || "0";
+                                    val = (parseFloat(baseValStr) * ((itemCol as any).percentageValue / 100)).toFixed(2);
+                                  } else {
+                                    val = customColumnValues[boqItem.id]?.[0]?.[col.name] || "";
+                                  }
+
+                                  accumulator += parseFloat(val) || 0;
                                   const itemPct = (itemCol as any).percentageValue || 0;
 
                                   return (
