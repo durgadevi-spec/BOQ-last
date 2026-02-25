@@ -96,6 +96,253 @@ type Step11Item = {
   [key: string]: any;
 };
 
+type DraggableHeaderColProps = {
+  col: any;
+  idx: number;
+  isVersionSubmitted: boolean;
+  allCols: any[];
+  getExcelColumnName: (n: number) => string;
+  handleGlobalCalculation: any;
+  globalColSettings: any;
+  handleHideColumn: any;
+  boqItems: any[];
+  customColumns: any;
+  customColumnValues: any;
+  saveItemLayout: any;
+  toast: any;
+  setCustomColumns: any;
+  setCustomColumnValues: any;
+};
+
+const DraggableHeaderCol = ({
+  col,
+  idx,
+  isVersionSubmitted,
+  allCols,
+  getExcelColumnName,
+  handleGlobalCalculation,
+  globalColSettings,
+  handleHideColumn,
+  boqItems,
+  customColumns,
+  customColumnValues,
+  saveItemLayout,
+  toast,
+  setCustomColumns,
+  setCustomColumnValues
+}: DraggableHeaderColProps) => {
+  const controls = useDragControls();
+
+  return (
+    <Reorder.Item
+      key={col.name}
+      value={col}
+      as="th"
+      dragListener={false}
+      dragControls={controls}
+      className={`border-r px-5 py-4 text-left min-w-[190px] group relative ${col.isTotal ? "text-green-900 bg-green-100/60" : "text-purple-900 bg-purple-100/60"}`}
+    >
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-2 overflow-hidden">
+            {!isVersionSubmitted && (
+              <GripHorizontal
+                size={12}
+                className="text-gray-400 cursor-grab active:cursor-grabbing flex-shrink-0"
+                onPointerDown={(e) => controls.start(e)}
+              />
+            )}
+            <span className="truncate font-black text-[13px] tracking-tight">{col.name}</span>
+          </div>
+          {!isVersionSubmitted && (
+            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={async () => {
+                  if (!confirm(`Clone column "${col.name}" for ALL products?`)) return;
+                  const newColName = `${col.name} (Copy)`;
+                  const updates = boqItems.map(item => {
+                    const itemCols = customColumns[item.id] || [];
+                    const nextCols = [...itemCols, { ...col, name: newColName }];
+                    const itemValues = { ...(customColumnValues[item.id] || {}) };
+                    Object.keys(itemValues).forEach(rowIdxStr => {
+                      const rowIdx = parseInt(rowIdxStr);
+                      const rowVals = { ...(itemValues[rowIdx] || {}) };
+                      if (rowVals[col.name] !== undefined) rowVals[newColName] = rowVals[col.name];
+                      itemValues[rowIdx] = rowVals;
+                    });
+                    setCustomColumns((prev: any) => ({ ...prev, [item.id]: nextCols }));
+                    setCustomColumnValues((prev: any) => ({ ...prev, [item.id]: itemValues }));
+                    return saveItemLayout(item.id, nextCols, itemValues);
+                  });
+                  await Promise.all(updates);
+                  toast({ title: "Column Cloned", description: `Column "${col.name}" cloned for all products.` });
+                }}
+                title="Clone Column Globally"
+                className="text-gray-400 hover:text-blue-600 transition-colors"
+              >
+                <Copy size={12} />
+              </button>
+              <button
+                onClick={() => handleHideColumn(col.name, true)}
+                title="Hide Column"
+                className="text-gray-400 hover:text-orange-600 transition-colors"
+              >
+                <EyeOff size={12} />
+              </button>
+              <button
+                onClick={async () => {
+                  if (!confirm(`Delete column "${col.name}" from ALL products?`)) return;
+                  const updates = boqItems.map(item => {
+                    const nextCols = (customColumns[item.id] || []).filter((c: any) => c.name !== col.name);
+                    const itemValues = { ...(customColumnValues[item.id] || {}) };
+                    Object.keys(itemValues).forEach(rowIdxStr => {
+                      const rowIdx = parseInt(rowIdxStr);
+                      const rowVals = { ...itemValues[rowIdx] };
+                      delete rowVals[col.name];
+                      itemValues[rowIdx] = rowVals;
+                    });
+                    setCustomColumns((prev: any) => ({ ...prev, [item.id]: nextCols }));
+                    setCustomColumnValues((prev: any) => ({ ...prev, [item.id]: itemValues }));
+                    return saveItemLayout(item.id, nextCols, itemValues);
+                  });
+                  await Promise.all(updates);
+                  toast({ title: "Column Deleted", description: `Column "${col.name}" removed from all products.` });
+                }}
+                title="Delete Column Globally"
+                className="text-gray-400 hover:text-red-600 transition-colors"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          )}
+        </div>
+        {(col as any).isPercentage && !isVersionSubmitted && (
+          <div className="mt-2 pt-2 border-t border-purple-200/60 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest">Base Source:</span>
+              <select
+                className="bg-purple-100/50 text-[9px] font-black text-purple-700 uppercase px-1.5 py-0.5 rounded border border-purple-200 outline-none cursor-pointer hover:bg-purple-200/50 transition-colors"
+                value={globalColSettings[col.name]?.baseSource || "manual"}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const newSource = e.target.value;
+                  handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, newSource, globalColSettings[col.name]?.operator || "%", globalColSettings[col.name]?.multiplierSource || "manual");
+                }}
+              >
+                <option value="manual">Fixed Value</option>
+                <option value="Rate / Unit">E: Rate / Unit</option>
+                <option value="Qty">F: Qty</option>
+                <option value="Total Value (₹)">G: Total Value (₹)</option>
+                {allCols.filter(c => c.name !== col.name).map((c) => {
+                  const colIdx = allCols.findIndex(cc => cc.name === c.name);
+                  return (
+                    <option key={c.name} value={c.name}>
+                      {getExcelColumnName(colIdx + 7)}: {c.name}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-purple-50/50 p-1.5 rounded-md border border-purple-100 shadow-inner">
+              <div className="flex-1 min-w-0">
+                {((col as any).baseSource || "manual") === "manual" ? (
+                  <input
+                    type="number"
+                    placeholder="Base ₹"
+                    className="w-full h-7 bg-white border border-purple-200 rounded px-2 text-[11px] font-black text-gray-800 outline-none focus:ring-2 ring-purple-400/50 text-right shadow-sm transition-shadow"
+                    value={globalColSettings[col.name]?.baseValue || ""}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={async (e) => {
+                      const newBase = parseFloat(e.target.value) || 0;
+                      const currentPct = globalColSettings[col.name]?.percentageValue || 0;
+                      const currentSource = globalColSettings[col.name]?.baseSource || "manual";
+                      handleGlobalCalculation(col.name, newBase, currentPct, currentSource);
+                    }}
+                  />
+                ) : (
+                  <div className="h-7 px-2 bg-gradient-to-r from-purple-600 to-indigo-600 rounded flex items-center justify-center shadow-sm">
+                    <span className="text-[9px] font-black text-white uppercase truncate flex items-center gap-1">
+                      <span className="opacity-70 text-[8px]">on</span>
+                      {(col as any).baseSource === "Total Value (₹)" ? "Total Value" : (col as any).baseSource}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <select
+                className="bg-white border border-purple-200 rounded text-[11px] font-black text-purple-700 outline-none h-7 px-1 cursor-pointer"
+                value={globalColSettings[col.name]?.operator || "%"}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  const newOp = e.target.value;
+                  handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, globalColSettings[col.name]?.baseSource || "manual", newOp, globalColSettings[col.name]?.multiplierSource || "manual");
+                }}
+              >
+                <option value="%">%</option>
+                <option value="*">×</option>
+                <option value="/">÷</option>
+                <option value="+">+</option>
+              </select>
+
+              <div className="flex items-center gap-1.5 w-auto flex-shrink-0">
+                <select
+                  className="bg-white border border-purple-200 rounded text-[10px] font-black text-purple-700 outline-none h-7 px-1 cursor-pointer"
+                  value={globalColSettings[col.name]?.multiplierSource || "manual"}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => {
+                    const newMS = e.target.value;
+                    handleGlobalCalculation(
+                      col.name,
+                      globalColSettings[col.name]?.baseValue || 0,
+                      globalColSettings[col.name]?.percentageValue || 0,
+                      globalColSettings[col.name]?.baseSource || "manual",
+                      globalColSettings[col.name]?.operator || "%",
+                      newMS
+                    );
+                  }}
+                >
+                  <option value="manual">Val</option>
+                  <option value="Rate / Unit">E: Rate / Unit</option>
+                  <option value="Qty">F: Qty</option>
+                  <option value="Total Value (₹)">G: Total Value (₹)</option>
+                  {allCols.filter(c => c.name !== col.name).map((c) => {
+                    const colIdx = allCols.findIndex(cc => cc.name === c.name);
+                    return (
+                      <option key={c.name} value={c.name}>
+                        {getExcelColumnName(colIdx + 7)}: {c.name}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                {(globalColSettings[col.name]?.multiplierSource || "manual") === "manual" && (
+                  <input
+                    type="number"
+                    placeholder="Value"
+                    className="w-14 h-9 bg-white border-2 border-purple-300 rounded-md px-2 text-[13px] font-black text-purple-700 outline-none focus:ring-2 ring-purple-400/50 text-right shadow-sm transition-all"
+                    value={globalColSettings[col.name]?.percentageValue || ""}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={async (e) => {
+                      const newVal = parseFloat(e.target.value) || 0;
+                      const currentBase = globalColSettings[col.name]?.baseValue || 0;
+                      const currentSource = globalColSettings[col.name]?.baseSource || "manual";
+                      const currentOp = globalColSettings[col.name]?.operator || "%";
+                      const currentMS = globalColSettings[col.name]?.multiplierSource || "manual";
+                      handleGlobalCalculation(col.name, currentBase, newVal, currentSource, currentOp, currentMS);
+                    }}
+                  />
+                )}
+                <span className="text-[13px] text-purple-600 font-black">{globalColSettings[col.name]?.operator || "%"}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </Reorder.Item>
+  );
+};
+
 export default function FinalizeBoq() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [boqItems, setBoqItems] = useState<BOMItem[]>([]);
@@ -1968,205 +2215,24 @@ export default function FinalizeBoq() {
                           style={{ display: "contents" }}
                         >
                           {allCols.map((col, idx) => (
-                            <Reorder.Item
+                            <DraggableHeaderCol
                               key={col.name}
-                              value={col}
-                              as="th"
-                              dragListener={!isVersionSubmitted}
-                              className={`border-r px-5 py-4 text-left min-w-[190px] group relative ${col.isTotal ? "text-green-900 bg-green-100/60" : "text-purple-900 bg-purple-100/60"}`}
-                            >
-                              <div className="flex flex-col gap-1.5">
-                                <div className="flex items-center justify-between gap-1">
-                                  <div className="flex items-center gap-2 overflow-hidden">
-                                    {!isVersionSubmitted && <GripHorizontal size={12} className="text-gray-400 cursor-grab active:cursor-grabbing flex-shrink-0" />}
-                                    <span className="truncate font-black text-[13px] tracking-tight">{col.name}</span>
-                                  </div>
-                                  {!isVersionSubmitted && (
-                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button
-                                        onClick={async () => {
-                                          if (!confirm(`Clone column "${col.name}" for ALL products?`)) return;
-                                          const newColName = `${col.name} (Copy)`;
-                                          const updates = boqItems.map(item => {
-                                            const itemCols = customColumns[item.id] || [];
-                                            const nextCols = [...itemCols, { ...col, name: newColName }];
-                                            const itemValues = { ...(customColumnValues[item.id] || {}) };
-                                            Object.keys(itemValues).forEach(rowIdxStr => {
-                                              const rowIdx = parseInt(rowIdxStr);
-                                              const rowVals = { ...(itemValues[rowIdx] || {}) };
-                                              if (rowVals[col.name] !== undefined) rowVals[newColName] = rowVals[col.name];
-                                              itemValues[rowIdx] = rowVals;
-                                            });
-                                            setCustomColumns(prev => ({ ...prev, [item.id]: nextCols }));
-                                            setCustomColumnValues(prev => ({ ...prev, [item.id]: itemValues }));
-                                            return saveItemLayout(item.id, nextCols, itemValues);
-                                          });
-                                          await Promise.all(updates);
-                                          toast({ title: "Column Cloned", description: `Column "${col.name}" cloned for all products.` });
-                                        }}
-                                        title="Clone Column Globally"
-                                        className="text-gray-400 hover:text-blue-600 transition-colors"
-                                      >
-                                        <Copy size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => handleHideColumn(col.name, true)}
-                                        title="Hide Column"
-                                        className="text-gray-400 hover:text-orange-600 transition-colors"
-                                      >
-                                        <EyeOff size={12} />
-                                      </button>
-                                      <button
-                                        onClick={async () => {
-                                          if (!confirm(`Delete column "${col.name}" from ALL products?`)) return;
-                                          const updates = boqItems.map(item => {
-                                            const nextCols = (customColumns[item.id] || []).filter(c => c.name !== col.name);
-                                            const itemValues = { ...(customColumnValues[item.id] || {}) };
-                                            Object.keys(itemValues).forEach(rowIdxStr => {
-                                              const rowIdx = parseInt(rowIdxStr);
-                                              const rowVals = { ...itemValues[rowIdx] };
-                                              delete rowVals[col.name];
-                                              itemValues[rowIdx] = rowVals;
-                                            });
-                                            setCustomColumns(prev => ({ ...prev, [item.id]: nextCols }));
-                                            setCustomColumnValues(prev => ({ ...prev, [item.id]: itemValues }));
-                                            return saveItemLayout(item.id, nextCols, itemValues);
-                                          });
-                                          await Promise.all(updates);
-                                          toast({ title: "Column Deleted", description: `Column "${col.name}" removed from all products.` });
-                                        }}
-                                        title="Delete Column Globally"
-                                        className="text-gray-400 hover:text-red-600 transition-colors"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                                {(col as any).isPercentage && !isVersionSubmitted && (
-                                  <div className="mt-2 pt-2 border-t border-purple-200/60 flex flex-col gap-2">
-                                    <div className="flex items-center justify-between gap-1">
-                                      <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest">Base Source:</span>
-                                      <select
-                                        className="bg-purple-100/50 text-[9px] font-black text-purple-700 uppercase px-1.5 py-0.5 rounded border border-purple-200 outline-none cursor-pointer hover:bg-purple-200/50 transition-colors"
-                                        value={globalColSettings[col.name]?.baseSource || "manual"}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => {
-                                          const newSource = e.target.value;
-                                          handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, newSource, globalColSettings[col.name]?.operator || "%", globalColSettings[col.name]?.multiplierSource || "manual");
-                                        }}
-                                      >
-                                        <option value="manual">Fixed Value</option>
-                                        <option value="Rate / Unit">E: Rate / Unit</option>
-                                        <option value="Qty">F: Qty</option>
-                                        <option value="Total Value (₹)">G: Total Value (₹)</option>
-                                        {allCols.filter(c => c.name !== col.name).map((c) => {
-                                          const colIdx = allCols.findIndex(cc => cc.name === c.name);
-                                          return (
-                                            <option key={c.name} value={c.name}>
-                                              {getExcelColumnName(colIdx + 7)}: {c.name}
-                                            </option>
-                                          );
-                                        })}
-                                      </select>
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5 bg-purple-50/50 p-1.5 rounded-md border border-purple-100 shadow-inner">
-                                      <div className="flex-1 min-w-0">
-                                        {((col as any).baseSource || "manual") === "manual" ? (
-                                          <input
-                                            type="number"
-                                            placeholder="Base ₹"
-                                            className="w-full h-7 bg-white border border-purple-200 rounded px-2 text-[11px] font-black text-gray-800 outline-none focus:ring-2 ring-purple-400/50 text-right shadow-sm transition-shadow"
-                                            value={globalColSettings[col.name]?.baseValue || ""}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={async (e) => {
-                                              const newBase = parseFloat(e.target.value) || 0;
-                                              const currentPct = globalColSettings[col.name]?.percentageValue || 0;
-                                              const currentSource = globalColSettings[col.name]?.baseSource || "manual";
-                                              handleGlobalCalculation(col.name, newBase, currentPct, currentSource);
-                                            }}
-                                          />
-                                        ) : (
-                                          <div className="h-7 px-2 bg-gradient-to-r from-purple-600 to-indigo-600 rounded flex items-center justify-center shadow-sm">
-                                            <span className="text-[9px] font-black text-white uppercase truncate flex items-center gap-1">
-                                              <span className="opacity-70 text-[8px]">on</span>
-                                              {(col as any).baseSource === "Total Value (₹)" ? "Total Value" : (col as any).baseSource}
-                                            </span>
-                                          </div>
-                                        )}
-                                      </div>
-
-                                      <select
-                                        className="bg-white border border-purple-200 rounded text-[11px] font-black text-purple-700 outline-none h-7 px-1 cursor-pointer"
-                                        value={globalColSettings[col.name]?.operator || "%"}
-                                        onClick={(e) => e.stopPropagation()}
-                                        onChange={(e) => {
-                                          const newOp = e.target.value;
-                                          handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, globalColSettings[col.name]?.baseSource || "manual", newOp, globalColSettings[col.name]?.multiplierSource || "manual");
-                                        }}
-                                      >
-                                        <option value="%">%</option>
-                                        <option value="*">×</option>
-                                        <option value="/">÷</option>
-                                        <option value="+">+</option>
-                                      </select>
-
-                                      <div className="flex items-center gap-1.5 w-auto flex-shrink-0">
-                                        <select
-                                          className="bg-white border border-purple-200 rounded text-[10px] font-black text-purple-700 outline-none h-7 px-1 cursor-pointer"
-                                          value={globalColSettings[col.name]?.multiplierSource || "manual"}
-                                          onClick={(e) => e.stopPropagation()}
-                                          onChange={(e) => {
-                                            const newMS = e.target.value;
-                                            handleGlobalCalculation(
-                                              col.name,
-                                              globalColSettings[col.name]?.baseValue || 0,
-                                              globalColSettings[col.name]?.percentageValue || 0,
-                                              globalColSettings[col.name]?.baseSource || "manual",
-                                              globalColSettings[col.name]?.operator || "%",
-                                              newMS
-                                            );
-                                          }}
-                                        >
-                                          <option value="manual">Val</option>
-                                          <option value="Rate / Unit">E: Rate / Unit</option>
-                                          <option value="Qty">F: Qty</option>
-                                          <option value="Total Value (₹)">G: Total Value (₹)</option>
-                                          {allCols.filter(c => c.name !== col.name).map((c) => {
-                                            const colIdx = allCols.findIndex(cc => cc.name === c.name);
-                                            return (
-                                              <option key={c.name} value={c.name}>
-                                                {getExcelColumnName(colIdx + 7)}: {c.name}
-                                              </option>
-                                            );
-                                          })}
-                                        </select>
-
-                                        {(globalColSettings[col.name]?.multiplierSource || "manual") === "manual" && (
-                                          <input
-                                            type="number"
-                                            placeholder="Value"
-                                            className="w-14 h-9 bg-white border-2 border-purple-300 rounded-md px-2 text-[13px] font-black text-purple-700 outline-none focus:ring-2 ring-purple-400/50 text-right shadow-sm transition-all"
-                                            value={globalColSettings[col.name]?.percentageValue || ""}
-                                            onClick={(e) => e.stopPropagation()}
-                                            onChange={async (e) => {
-                                              const newVal = parseFloat(e.target.value) || 0;
-                                              const currentBase = globalColSettings[col.name]?.baseValue || 0;
-                                              const currentSource = globalColSettings[col.name]?.baseSource || "manual";
-                                              const currentOp = globalColSettings[col.name]?.operator || "%";
-                                              const currentMS = globalColSettings[col.name]?.multiplierSource || "manual";
-                                              handleGlobalCalculation(col.name, currentBase, newVal, currentSource, currentOp, currentMS);
-                                            }}
-                                          />
-                                        )}
-                                        <span className="text-[13px] text-purple-600 font-black">{globalColSettings[col.name]?.operator || "%"}</span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </Reorder.Item>
+                              col={col}
+                              idx={idx}
+                              isVersionSubmitted={isVersionSubmitted}
+                              allCols={allCols}
+                              getExcelColumnName={getExcelColumnName}
+                              handleGlobalCalculation={handleGlobalCalculation}
+                              globalColSettings={globalColSettings}
+                              handleHideColumn={handleHideColumn}
+                              boqItems={boqItems}
+                              customColumns={customColumns}
+                              customColumnValues={customColumnValues}
+                              saveItemLayout={saveItemLayout}
+                              toast={toast}
+                              setCustomColumns={setCustomColumns}
+                              setCustomColumnValues={setCustomColumnValues}
+                            />
                           ))}
                         </Reorder.Group>
                       </tr>
@@ -2328,10 +2394,12 @@ export default function FinalizeBoq() {
                                   const itemCol = itemColList.find((c: any) => c.name === col.name) || col;
                                   const baseSource = (itemCol as any).baseSource;
                                   const isCalculated = baseSource && baseSource !== "manual";
-                                  const operator = (itemCol as any).operator || "%";
-                                  const multiplier = (itemCol as any).percentageValue || 0;
-
                                   let valNum = 0;
+                                  const multiplierSource = (itemCol as any).multiplierSource || "manual";
+                                  const manualMultiplier = (itemCol as any).percentageValue || 0;
+                                  const operator = (itemCol as any).operator || "%";
+                                  let multiplierVal = 0;
+
                                   if (isCalculated) {
                                     let baseVal = 0;
                                     if (baseSource === "Total Value (₹)") {
@@ -2347,10 +2415,25 @@ export default function FinalizeBoq() {
                                       baseVal = parseFloat(baseValStr) || 0;
                                     }
 
-                                    if (operator === "%") valNum = baseVal * (multiplier / 100);
-                                    else if (operator === "*") valNum = baseVal * multiplier;
-                                    else if (operator === "/") valNum = multiplier !== 0 ? baseVal / multiplier : 0;
-                                    else if (operator === "+") valNum = baseVal + multiplier;
+                                    if (multiplierSource === "manual") {
+                                      multiplierVal = manualMultiplier;
+                                    } else if (multiplierSource === "Total Value (₹)") {
+                                      multiplierVal = baseTotalValue;
+                                    } else if (multiplierSource === "Rate / Unit") {
+                                      multiplierVal = rateSqft;
+                                    } else if (multiplierSource === "Qty") {
+                                      multiplierVal = displayQty;
+                                    } else if (rowCalculatedValues[multiplierSource] !== undefined) {
+                                      multiplierVal = rowCalculatedValues[multiplierSource];
+                                    } else {
+                                      const mValStr = customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0";
+                                      multiplierVal = parseFloat(mValStr) || 0;
+                                    }
+
+                                    if (operator === "%") valNum = baseVal * (multiplierVal / 100);
+                                    else if (operator === "*") valNum = baseVal * multiplierVal;
+                                    else if (operator === "/") valNum = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
+                                    else if (operator === "+") valNum = baseVal + multiplierVal;
                                   } else {
                                     valNum = parseFloat(customColumnValues[boqItem.id]?.[0]?.[col.name] || "0") || 0;
                                   }
