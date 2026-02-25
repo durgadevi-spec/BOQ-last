@@ -1441,15 +1441,15 @@ export default function FinalizeBoq() {
       return;
     }
 
-    // Identify ALL potential columns first to populate selection list
+    // Identify ALL potential columns first to populate selection list in correct visual order
     const potentialCols = [
       "S.No",
       "Product / Material",
       "Description / Location",
-      ...allCols.map(c => c.name),
       "Rate / Unit",
       "Qty",
-      "Total Value (₹)"
+      "Total Value (₹)",
+      ...allCols.map(c => c.name)
     ];
 
     setSelectedExportCols(potentialCols);
@@ -1481,8 +1481,11 @@ export default function FinalizeBoq() {
         let tableData = boqItem.table_data || {};
         if (typeof tableData === "string") try { tableData = JSON.parse(tableData); } catch { tableData = {}; }
 
-        const step11Items: Step11Item[] = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
-        const productName = tableData.product_name || boqItem.estimator || "—";
+        const currentStep11Items: Step11Item[] = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
+        const derivedProductName = tableData.product_name || boqItem.estimator || "—";
+        const productName = (derivedProductName === "Manual Product" || derivedProductName === "Manual" || boqItem.estimator === "manual_product" || boqItem.estimator === "Manual")
+          ? (currentStep11Items[0]?.title || currentStep11Items[0]?.description || derivedProductName)
+          : derivedProductName;
         const category = tableData.category || "";
 
         const manualQtyStr = productQuantities[boqItem.id];
@@ -1490,18 +1493,20 @@ export default function FinalizeBoq() {
           ? (parseFloat(manualQtyStr) || 0)
           : (tableData.materialLines && tableData.targetRequiredQty !== undefined
             ? tableData.targetRequiredQty
-            : (step11Items[0]?.qty || 0));
+            : (currentStep11Items[0]?.qty || 0));
 
         let totalVal = 0;
         let rateSqft = 0;
         if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
           const res = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
-          totalVal = res.grandTotal;
+          const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
+            s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
+          totalVal = res.grandTotal + manualTotal;
           rateSqft = tableData.targetRequiredQty > 0 ? totalVal / tableData.targetRequiredQty : 0;
         } else {
-          totalVal = step11Items.reduce((s: number, it: any) =>
+          totalVal = currentStep11Items.reduce((s: number, it: any) =>
             s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-          rateSqft = (step11Items[0]?.qty ?? 0) > 0 ? totalVal / (step11Items[0]?.qty || 1) : totalVal;
+          rateSqft = (currentStep11Items[0]?.qty ?? 0) > 0 ? totalVal / (currentStep11Items[0]?.qty || 1) : totalVal;
         }
 
         // Adjust for manual qty
@@ -1511,49 +1516,87 @@ export default function FinalizeBoq() {
           tableData.subcategory || step11Items[0]?.description || category || ""
         );
 
-        const row: any[] = [];
-        selectedExportCols.forEach(colName => {
-          if (colName === "S.No") row.push(boqIdx + 1);
-          else if (colName === "Product / Material") row.push(productName);
-          else if (colName === "Description / Location") row.push(manualDesc);
-          else if (colName === "Rate / Unit") row.push(Number(rateSqft.toFixed(2)));
-          else if (colName === "Qty") {
-            const manualQtyStr = productQuantities[boqItem.id];
-            const qty = manualQtyStr !== undefined
-              ? (parseFloat(manualQtyStr) || 0)
-              : (tableData.materialLines && tableData.targetRequiredQty !== undefined
-                ? tableData.targetRequiredQty
-                : (step11Items[0]?.qty || 0));
-            row.push(Number(qty.toFixed(2)));
-          }
-          else if (colName === "Total Value (₹)") row.push(Number(totalVal.toFixed(2)));
+        const rowValues: { [colName: string]: any } = {};
+        const rowCalculatedValues: { [colName: string]: number } = {};
+        let currentRunningTotal = totalVal;
+        let accumulator = 0;
+
+        // 1. Calculate ALL potential columns in visual order to respect dependencies
+        const allPotentialColsInOrder = [
+          "S.No",
+          "Product / Material",
+          "Description / Location",
+          "Rate / Unit",
+          "Qty",
+          "Total Value (₹)",
+          ...allCols.map(c => c.name)
+        ];
+
+        allPotentialColsInOrder.forEach(colName => {
+          if (colName === "S.No") rowValues[colName] = boqIdx + 1;
+          else if (colName === "Product / Material") rowValues[colName] = productName;
+          else if (colName === "Description / Location") rowValues[colName] = manualDesc;
+          else if (colName === "Rate / Unit") rowValues[colName] = Number(rateSqft.toFixed(2));
+          else if (colName === "Qty") rowValues[colName] = Number(displayQty.toFixed(2));
+          else if (colName === "Total Value (₹)") rowValues[colName] = Number(totalVal.toFixed(2));
           else {
-            // It's a custom column
             const currentCol = allCols.find(c => c.name === colName);
-            if (currentCol?.isTotal) {
-              // Calculate running total for this custom column
-              let runningTotal = totalVal;
-              let accumulator = 0;
-              // We need to recreate the cumulative logic here
-              const itemCols = customColumns[boqItem.id] || [];
-              for (const c of itemCols) {
-                if (c.name === colName) {
-                  runningTotal += accumulator;
-                  break;
-                }
-                const val = parseFloat(customColumnValues[boqItem.id]?.[0]?.[c.name] || "0") || 0;
-                accumulator += val;
-              }
-              row.push(Number(runningTotal.toFixed(2)));
+            if (!currentCol) {
+              rowValues[colName] = 0;
+              return;
+            }
+
+            if (currentCol.isTotal) {
+              currentRunningTotal += accumulator;
+              accumulator = 0;
+              rowCalculatedValues[colName] = currentRunningTotal;
+              rowValues[colName] = Number(currentRunningTotal.toFixed(2));
             } else {
-              const valStr = customColumnValues[boqItem.id]?.[0]?.[colName] || "0";
-              const numVal = parseFloat(valStr) || 0;
-              // If it's a percentage based column, maybe we want to show percent?
-              // The user said "even with the percentages etc". 
-              // Usually they mean they want the values to be accurate.
-              row.push(Number(numVal.toFixed(2)));
+              const itemColList = customColumns[boqItem.id] || [];
+              const itemCol = itemColList.find((c: any) => c.name === colName) || currentCol;
+              const baseSource = (itemCol as any).baseSource;
+              const isCalculated = baseSource && baseSource !== "manual";
+              let valNum = 0;
+
+              if (isCalculated) {
+                const multiplierSource = (itemCol as any).multiplierSource || "manual";
+                const manualMultiplier = (itemCol as any).percentageValue || 0;
+                const operator = (itemCol as any).operator || "%";
+
+                let baseVal = 0;
+                if (baseSource === "Total Value (₹)") baseVal = totalVal;
+                else if (baseSource === "Rate / Unit") baseVal = rateSqft;
+                else if (baseSource === "Qty") baseVal = displayQty;
+                else if (rowCalculatedValues[baseSource] !== undefined) baseVal = rowCalculatedValues[baseSource];
+                else baseVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[baseSource] || "0") || 0;
+
+                let multiplierVal = 0;
+                if (multiplierSource === "manual") multiplierVal = manualMultiplier;
+                else if (multiplierSource === "Total Value (₹)") multiplierVal = totalVal;
+                else if (multiplierSource === "Rate / Unit") multiplierVal = rateSqft;
+                else if (multiplierSource === "Qty") multiplierVal = displayQty;
+                else if (rowCalculatedValues[multiplierSource] !== undefined) multiplierVal = rowCalculatedValues[multiplierSource];
+                else multiplierVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0") || 0;
+
+                if (operator === "%") valNum = baseVal * (multiplierVal / 100);
+                else if (operator === "*") valNum = baseVal * multiplierVal;
+                else if (operator === "/") valNum = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
+                else if (operator === "+") valNum = baseVal + multiplierVal;
+              } else {
+                valNum = parseFloat(customColumnValues[boqItem.id]?.[0]?.[colName] || "0") || 0;
+              }
+
+              rowCalculatedValues[colName] = valNum;
+              accumulator += valNum;
+              rowValues[colName] = Number(valNum.toFixed(2));
             }
           }
+        });
+
+        // 2. Build the row based ONLY on selectedExportCols
+        const row: any[] = [];
+        selectedExportCols.forEach(colName => {
+          row.push(rowValues[colName] ?? "");
         });
         sheetData.push(row);
       });
@@ -1627,8 +1670,11 @@ export default function FinalizeBoq() {
         let tableData = boqItem.table_data || {};
         if (typeof tableData === "string") try { tableData = JSON.parse(tableData); } catch { tableData = {}; }
 
-        const step11Items: Step11Item[] = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
-        const productName = tableData.product_name || boqItem.estimator || "—";
+        const currentStep11Items: Step11Item[] = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
+        const derivedProductName = tableData.product_name || boqItem.estimator || "—";
+        const productName = (derivedProductName === "Manual Product" || derivedProductName === "Manual" || boqItem.estimator === "manual_product" || boqItem.estimator === "Manual")
+          ? (currentStep11Items[0]?.title || currentStep11Items[0]?.description || derivedProductName)
+          : derivedProductName;
         const category = tableData.category || "";
 
         const manualQtyStr = productQuantities[boqItem.id];
@@ -1636,19 +1682,21 @@ export default function FinalizeBoq() {
           ? (parseFloat(manualQtyStr) || 0)
           : (tableData.materialLines && tableData.targetRequiredQty !== undefined
             ? tableData.targetRequiredQty
-            : (step11Items[0]?.qty || 0));
+            : (currentStep11Items[0]?.qty || 0));
 
         // Totals
         let totalVal = 0;
         let rateSqft = 0;
         if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
           const res = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
-          totalVal = res.grandTotal;
+          const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
+            s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
+          totalVal = res.grandTotal + manualTotal;
           rateSqft = tableData.targetRequiredQty > 0 ? totalVal / tableData.targetRequiredQty : 0;
         } else {
-          totalVal = step11Items.reduce((s: number, it: any) =>
+          totalVal = currentStep11Items.reduce((s: number, it: any) =>
             s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-          rateSqft = (step11Items[0]?.qty ?? 0) > 0 ? totalVal / (step11Items[0]?.qty || 1) : totalVal;
+          rateSqft = (currentStep11Items[0]?.qty ?? 0) > 0 ? totalVal / (currentStep11Items[0]?.qty || 1) : totalVal;
         }
 
         // Adjust for manual qty
@@ -1986,29 +2034,44 @@ export default function FinalizeBoq() {
             </DialogHeader>
             <div className="grid grid-cols-2 gap-4 py-4">
               {[
-                "S.No",
-                "Product / Material",
-                "Description / Location",
-                "Rate / Unit",
-                "Qty",
-                "Total Value (₹)",
-                ...allCols.map(c => c.name)
+                { label: "B: #", name: "S.No" },
+                { label: "C: Product / Material", name: "Product / Material" },
+                { label: "D: Description / Location", name: "Description / Location" },
+                { label: "E: Rate / Unit", name: "Rate / Unit" },
+                { label: "F: Qty", name: "Qty" },
+                { label: "G: Total Value (₹)", name: "Total Value (₹)" },
+                ...allCols.map((c, idx) => ({
+                  label: `${getExcelColumnName(idx + 7)}: ${c.name}`,
+                  name: c.name
+                }))
               ].map(col => (
-                <div key={col} className="flex items-center space-x-2">
+                <div key={col.name} className="flex items-center space-x-2">
                   <Checkbox
-                    id={`col-${col}`}
-                    checked={selectedExportCols.includes(col)}
+                    id={`col-${col.name}`}
+                    checked={selectedExportCols.includes(col.name)}
                     onCheckedChange={(checked) => {
                       if (checked) {
-                        setSelectedExportCols(prev => [...prev, col]);
+                        setSelectedExportCols(prev => {
+                          const next = [...prev, col.name];
+                          // maintain table order
+                          const order = [
+                            "S.No", "Product / Material", "Description / Location",
+                            "Rate / Unit", "Qty", "Total Value (₹)",
+                            ...allCols.map(c => c.name)
+                          ];
+                          return order.filter(o => next.includes(o));
+                        });
                       } else {
-                        setSelectedExportCols(prev => prev.filter(c => c !== col));
+                        setSelectedExportCols(prev => prev.filter(c => c !== col.name));
                       }
                     }}
                   />
-                  <Label htmlFor={`col-${col}`} className="text-sm font-medium leading-none cursor-pointer">
-                    {col}
-                  </Label>
+                  <label
+                    htmlFor={`col-${col.name}`}
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  >
+                    {col.label}
+                  </label>
                 </div>
               ))}
             </div>
