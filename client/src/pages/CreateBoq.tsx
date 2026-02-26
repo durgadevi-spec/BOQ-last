@@ -72,6 +72,8 @@ type Product = {
   description?: string;
   category_name?: string;
   subcategory_name?: string;
+  tax_code_type?: string;
+  tax_code_value?: string;
 };
 
 type Step11Item = {
@@ -270,7 +272,35 @@ export default function CreateBom() {
       if (response.ok) {
         try {
           const data = await safeParseJson(response as unknown as Response);
-          setBoqItems(data.items || []);
+          const items: BOMItem[] = data.items || [];
+
+          // Backfill HSN/SAC codes from products API for existing items
+          try {
+            const productsResp = await apiFetch("/api/products");
+            if (productsResp.ok) {
+              const productsData = await productsResp.json();
+              const productsList: any[] = productsData.products || [];
+              const productsById: { [id: string]: any } = {};
+              productsList.forEach(p => { productsById[p.id] = p; });
+
+              for (const item of items) {
+                let td = item.table_data || {};
+                if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+                if (td.product_id && !td.hsn_sac_code) {
+                  const prod = productsById[td.product_id];
+                  if (prod && prod.tax_code_value) {
+                    td.hsn_sac_code = prod.tax_code_value;
+                    td.hsn_sac_type = prod.tax_code_type || null;
+                    item.table_data = td;
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Failed to backfill HSN/SAC codes:", e);
+          }
+
+          setBoqItems(items);
         } catch (e) {
           toast({ title: "Error", description: "Failed to parse BOQ items response", variant: "destructive" });
           console.error("BOQ items parse error:", e);
@@ -830,6 +860,8 @@ export default function CreateBom() {
         product_id: selectedProduct.id,
         category: selectedProduct.category,
         subcategory: selectedProduct.subcategory,
+        hsn_sac_type: selectedProduct.tax_code_type || null,
+        hsn_sac_code: selectedProduct.tax_code_value || null,
 
         // NEW BOQ ENGINE FIELDS
         targetRequiredQty: targetRequiredQty,
@@ -1777,11 +1809,51 @@ export default function CreateBom() {
                                   {expandedProductIds.has(boqItem.id) ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                                 </Button>
                               </div>
-                              {isEngineBased && (
-                                <div className="flex items-center gap-2 text-[11px] text-gray-600 font-medium">
-                                  Project Target: <span className="text-blue-600 font-bold">{tableData.targetRequiredQty} {tableData.configBasis?.requiredUnitType}</span>
+                              <div className="flex flex-col gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <Input
+                                  placeholder="Enter product description..."
+                                  className="h-8 text-xs w-full max-w-md mt-1"
+                                  defaultValue={tableData.finalize_description || ""}
+                                  disabled={isVersionSubmitted}
+                                  onBlur={async (e) => {
+                                    const newDesc = e.target.value;
+                                    if (newDesc === (tableData.finalize_description || "")) return;
+                                    
+                                    try {
+                                      const updatedTd = { ...tableData, finalize_description: newDesc };
+                                      const resp = await apiFetch(`/api/boq-items/${boqItem.id}`, {
+                                        method: "PUT",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ table_data: updatedTd }),
+                                      });
+                                      if (resp.ok) {
+                                        toast({ title: "Saved", description: "Product description updated" });
+                                        // Update local state to reflect the change without full reload if possible
+                                        setBoqItems(prev => prev.map(item => 
+                                          item.id === boqItem.id ? { ...item, table_data: updatedTd } : item
+                                        ));
+                                      }
+                                    } catch (err) {
+                                      console.error("Failed to save description", err);
+                                      toast({ title: "Error", description: "Failed to save description", variant: "destructive" });
+                                    }
+                                  }}
+                                />
+                                <div className="flex items-center gap-1 mt-1">
+                                  <span className="text-[10px] font-bold text-gray-500 uppercase">HSN/SAC:</span>
+                                  <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded border border-gray-200 min-w-[80px]">
+                                    {tableData.hsn_sac_code || "\u2014"}
+                                  </span>
                                 </div>
-                              )}
+
+                              </div>
+                                {isEngineBased && (
+                                  <div className="flex items-center gap-2 text-[11px] text-gray-600 font-medium">
+                                    Project Target: <span className="text-blue-600 font-bold">{tableData.targetRequiredQty} {tableData.configBasis?.requiredUnitType}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <div className="flex gap-2">
                               {!tableData.is_finalized && (

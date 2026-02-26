@@ -11,6 +11,21 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express,
 ): Promise<Server> {
+  // Helper to parse numeric values safely from strings (e.g. "₹ 1,500.00")
+  const parseSafeNumeric = (val: any): number | null => {
+    if (val === undefined || val === null || val === "") return null;
+    if (typeof val === "number") return isNaN(val) ? null : val;
+
+    try {
+      // Remove currency symbols, commas, and other non-numeric chars except decimals
+      const cleaned = String(val).replace(/[^0-9.-]/g, "");
+      const parsed = parseFloat(cleaned);
+      return isNaN(parsed) ? null : parsed;
+    } catch {
+      return null;
+    }
+  };
+
   // Seed default material templates on startup (best-effort)
   try {
     // dynamic import to avoid circular deps during startup
@@ -202,6 +217,7 @@ export async function registerRoutes(
     );
   }
 
+
   // Ensure shops table has vendor_category column
   try {
     await query(
@@ -240,8 +256,16 @@ export async function registerRoutes(
   }
   try {
     await query(`ALTER TABLE boq_projects ADD COLUMN IF NOT EXISTS location TEXT`);
+    await query(`ALTER TABLE boq_projects ADD COLUMN IF NOT EXISTS client_address TEXT`);
+    await query(`ALTER TABLE boq_projects ADD COLUMN IF NOT EXISTS gst_no VARCHAR(100)`);
+    await query(`ALTER TABLE boq_projects ADD COLUMN IF NOT EXISTS project_value VARCHAR(100)`);
+
+    // Also on boq_versions for snapshots
+    await query(`ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS project_client_address TEXT`);
+    await query(`ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS project_gst_no VARCHAR(100)`);
+    await query(`ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS project_value VARCHAR(100)`);
   } catch (err: unknown) {
-    console.warn('[db] Could not add location column to boq_projects (continuing):', (err as any)?.message || err);
+    console.warn('[db] Could not update boq_projects/versions columns (continuing):', (err as any)?.message || err);
   }
 
   // Ensure boq_items table exists (stores BOQ line items captured from estimators)
@@ -517,6 +541,47 @@ export async function registerRoutes(
   } catch (err: unknown) {
     console.warn(
       "[db] Could not create vendor_categories table:",
+      (err as any)?.message || err,
+    );
+  }
+
+  // Create boq_templates table for reusable BOQ finalize layouts
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS boq_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name VARCHAR(255) NOT NULL UNIQUE,
+        config JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log("[db] boq_templates table verified/created");
+  } catch (err: unknown) {
+    console.warn(
+      "[db] Could not create boq_templates table:",
+      (err as any)?.message || err,
+    );
+  }
+
+  // Ensure global_settings table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS global_settings (
+        id VARCHAR(50) PRIMARY KEY,
+        value JSONB NOT NULL,
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    // Seed default terms and conditions if not exists
+    const existing = await query(`SELECT * FROM global_settings WHERE id = 'terms_and_conditions'`);
+    if (existing.rows.length === 0) {
+      await query(`INSERT INTO global_settings (id, value) VALUES ('terms_and_conditions', '"Standard Terms: 1. Final payment as per BOQ measurements. 2. Any additional items extra."')`);
+    }
+    console.log("[db] global_settings table verified/created");
+  } catch (err: unknown) {
+    console.warn(
+      "[db] Could not create global_settings table:",
       (err as any)?.message || err,
     );
   }
@@ -1217,7 +1282,7 @@ export async function registerRoutes(
             id,
             body.name || null,
             body.code || null,
-            body.rate || 0,
+            parseSafeNumeric(body.rate) || 0,
             shop_id,
             body.unit || null,
             body.category || null,
@@ -1458,6 +1523,7 @@ export async function registerRoutes(
         if (body[k] !== undefined) {
           let val = body[k];
           if (k === "shop_id" && val === "") val = null;
+          if (k === "rate") val = parseSafeNumeric(val);
           fields.push(`${k} = $${idx++}`);
           vals.push(val);
         }
@@ -1975,7 +2041,7 @@ export async function registerRoutes(
           const category = (raw.category || raw.Category || "").toString().trim() || null;
           const subcategory = (raw.subcategory || raw.Subcategory || "").toString().trim() || null;
           const unit = (raw.unit || raw.Unit || "").toString().trim() || null;
-          const rate = raw.rate !== undefined && raw.rate !== null ? Number(raw.rate) : null;
+          const rate = parseSafeNumeric(raw.rate);
           const vendor_category = (raw.vendor_category || raw.vendorCategory || null) || null;
           let tax_code_type = (raw.tax_code_type || raw.taxCodeType || null) || null;
 
@@ -3098,8 +3164,8 @@ export async function registerRoutes(
     authMiddleware,
     async (req: Request, res: Response) => {
       try {
-        const { name, client, budget, location } = req.body;
-        console.log('/api/boq-projects POST body ->', { name, client, budget, location });
+        const { name, client, budget, location, client_address, gst_no, project_value } = req.body;
+        console.log('/api/boq-projects POST body ->', { name, client, budget, location, client_address, gst_no, project_value });
 
         if (!name || !name.trim()) {
           res.status(400).json({ message: "Project name is required" });
@@ -3109,9 +3175,9 @@ export async function registerRoutes(
         const projectId = `proj-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         await query(
-          `INSERT INTO boq_projects (id, name, client, budget, location, status, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
-          [projectId, name.trim(), client || "", budget || "", location || null, "draft"],
+          `INSERT INTO boq_projects (id, name, client, budget, location, client_address, gst_no, project_value, status, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
+          [projectId, name.trim(), client || "", budget || "", location || null, client_address || null, gst_no || null, project_value || null, "draft"],
         );
 
         res.json({
@@ -3120,6 +3186,9 @@ export async function registerRoutes(
           client: client || "",
           budget: budget || "",
           location: location || "",
+          client_address: client_address || "",
+          gst_no: gst_no || "",
+          project_value: project_value || "",
           status: "draft",
         });
       } catch (err) {
@@ -3136,7 +3205,7 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const result = await query(
-          `SELECT id, name, client, budget, location, status, created_at, updated_at FROM boq_projects ORDER BY created_at DESC`,
+          `SELECT id, name, client, budget, location, client_address, gst_no, project_value, status, created_at, updated_at FROM boq_projects ORDER BY created_at DESC`,
         );
 
         res.json({ projects: result.rows || [] });
@@ -3156,7 +3225,7 @@ export async function registerRoutes(
         const { projectId } = req.params;
 
         const result = await query(
-          `SELECT id, name, client, budget, location, status, created_at, updated_at FROM boq_projects WHERE id = $1`,
+          `SELECT id, name, client, budget, location, client_address, gst_no, project_value, status, created_at, updated_at FROM boq_projects WHERE id = $1`,
           [projectId],
         );
 
@@ -3872,6 +3941,53 @@ export async function registerRoutes(
       }
     },
   );
+
+  // ====== BOQ TEMPLATE ROUTES ======
+
+  // GET /api/boq-templates - List all templates
+  app.get("/api/boq-templates", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const result = await query("SELECT * FROM boq_templates ORDER BY name ASC");
+      res.json({ templates: result.rows });
+    } catch (err) {
+      console.error("GET /api/boq-templates error", err);
+      res.status(500).json({ message: "Failed to fetch templates" });
+    }
+  });
+
+  // POST /api/boq-templates - Save a new template
+  app.post("/api/boq-templates", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { name, config } = req.body;
+      if (!name || !config) {
+        return res.status(400).json({ message: "Name and config are required" });
+      }
+
+      await query(
+        `INSERT INTO boq_templates (name, config, updated_at) 
+         VALUES ($1, $2, NOW()) 
+         ON CONFLICT (name) DO UPDATE SET config = $2, updated_at = NOW()`,
+        [name, JSON.stringify(config)]
+      );
+
+      res.json({ message: "Template saved successfully" });
+    } catch (err) {
+      console.error("POST /api/boq-templates error", err);
+      res.status(500).json({ message: "Failed to save template" });
+    }
+  });
+
+  // DELETE /api/boq-templates/:id - Delete a template
+  app.delete("/api/boq-templates/:id", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      await query("DELETE FROM boq_templates WHERE id = $1", [id]);
+      res.json({ message: "Template deleted" });
+    } catch (err) {
+      console.error("DELETE /api/boq-templates error", err);
+      res.status(500).json({ message: "Failed to delete template" });
+    }
+  });
 
   // Estimator Step Data Storage Routes
   app.post(
@@ -4780,6 +4896,39 @@ export async function registerRoutes(
       }
     }
   );
+
+  // ====== GLOBAL SETTINGS ROUTES ======
+
+  app.get("/api/global-settings", authMiddleware, async (_req, res) => {
+    try {
+      const result = await query(`SELECT * FROM global_settings`);
+      const settings: { [key: string]: any } = {};
+      result.rows.forEach(row => {
+        settings[row.id] = row.value;
+      });
+      res.json(settings);
+    } catch (err) {
+      console.error("Failed to fetch global settings:", err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
+
+  app.put("/api/global-settings/:id", authMiddleware, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { value } = req.body;
+      await query(
+        `INSERT INTO global_settings (id, value, updated_at) 
+         VALUES ($1, $2, NOW()) 
+         ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [id, JSON.stringify(value)]
+      );
+      res.json({ message: `Setting ${id} updated` });
+    } catch (err) {
+      console.error(`Failed to update global setting ${req.params.id}:`, err);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
 
   return httpServer;
 }

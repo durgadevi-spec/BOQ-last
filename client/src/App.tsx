@@ -46,6 +46,7 @@ import BoqReview from "@/pages/BoqReview";
 import CreateBoq from "@/pages/CreateBoq";
 import FinalizeBoq from "@/pages/FinalizeBoq";
 import CreateProject from "@/pages/CreateProject";
+import ProjectDashboard from "@/pages/ProjectDashboard";
 
 import SupplierMaterials from "@/pages/supplier/SupplierMaterials";
 import SupplierShops from "@/pages/supplier/SupplierShops";
@@ -77,6 +78,7 @@ function Router() {
       <Route path="/create-project" component={CreateProject} />
       <Route path="/create-bom" component={CreateBoq} />
       <Route path="/finalize-bom" component={FinalizeBoq} />
+      <Route path="/project-dashboard" component={ProjectDashboard} />
       <Route path="/item-master" component={ItemMaster} />
       <Route path="/bom-review" component={BoqReview} />
 

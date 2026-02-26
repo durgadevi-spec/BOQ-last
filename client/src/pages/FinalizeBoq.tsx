@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import { Layout } from "@/components/layout/Layout";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,6 +79,16 @@ type Product = {
   description?: string;
   category_name?: string;
   subcategory_name?: string;
+  tax_code_type?: string;
+  tax_code_value?: string;
+};
+
+type BOQTemplate = {
+  id: string;
+  name: string;
+  config: any;
+  created_at: string;
+  updated_at: string;
 };
 
 type Step11Item = {
@@ -140,201 +150,127 @@ const DraggableHeaderCol = ({
       as="th"
       dragListener={false}
       dragControls={controls}
-      className={`border-r px-5 py-4 text-left min-w-[190px] group relative ${col.isTotal ? "text-green-900 bg-green-100/60" : "text-purple-900 bg-purple-100/60"}`}
+      className={`border-r px-2 py-1 text-left min-w-[110px] sm:min-w-[130px] group relative ${col.isTotal ? "text-green-900 bg-green-100/40" : "text-purple-900 bg-purple-100/40"}`}
     >
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center justify-between gap-1">
-          <div className="flex items-center gap-2 overflow-hidden">
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center justify-between gap-1 overflow-hidden">
+          <div className="flex items-center gap-1.5 overflow-hidden">
             {!isVersionSubmitted && (
               <GripHorizontal
-                size={12}
+                size={10}
                 className="text-gray-400 cursor-grab active:cursor-grabbing flex-shrink-0"
                 onPointerDown={(e) => controls.start(e)}
               />
             )}
-            <span className="truncate font-black text-[13px] tracking-tight">{col.name}</span>
+            <span className="truncate font-bold text-[9px] uppercase tracking-tighter text-gray-700">{col.name}</span>
           </div>
           {!isVersionSubmitted && (
-            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 onClick={async () => {
-                  if (!confirm(`Clone column "${col.name}" for ALL products?`)) return;
+                  if (!confirm(`Clone "${col.name}"?`)) return;
                   const newColName = `${col.name} (Copy)`;
                   const updates = boqItems.map(item => {
                     const itemCols = customColumns[item.id] || [];
                     const nextCols = [...itemCols, { ...col, name: newColName }];
                     const itemValues = { ...(customColumnValues[item.id] || {}) };
-                    Object.keys(itemValues).forEach(rowIdxStr => {
-                      const rowIdx = parseInt(rowIdxStr);
-                      const rowVals = { ...(itemValues[rowIdx] || {}) };
+                    Object.keys(itemValues).forEach(r => {
+                      const ri = parseInt(r);
+                      const rowVals = { ...(itemValues[ri] || {}) };
                       if (rowVals[col.name] !== undefined) rowVals[newColName] = rowVals[col.name];
-                      itemValues[rowIdx] = rowVals;
+                      itemValues[ri] = rowVals;
                     });
                     setCustomColumns((prev: any) => ({ ...prev, [item.id]: nextCols }));
                     setCustomColumnValues((prev: any) => ({ ...prev, [item.id]: itemValues }));
                     return saveItemLayout(item.id, nextCols, itemValues);
                   });
                   await Promise.all(updates);
-                  toast({ title: "Column Cloned", description: `Column "${col.name}" cloned for all products.` });
                 }}
-                title="Clone Column Globally"
-                className="text-gray-400 hover:text-blue-600 transition-colors"
-              >
-                <Copy size={12} />
-              </button>
-              <button
-                onClick={() => handleHideColumn(col.name, true)}
-                title="Hide Column"
-                className="text-gray-400 hover:text-orange-600 transition-colors"
-              >
-                <EyeOff size={12} />
-              </button>
+                className="text-gray-400 hover:text-blue-500"
+              ><Copy size={10} /></button>
+              <button onClick={() => handleHideColumn(col.name, true)} className="text-gray-400 hover:text-orange-500"><EyeOff size={10} /></button>
               <button
                 onClick={async () => {
-                  if (!confirm(`Delete column "${col.name}" from ALL products?`)) return;
+                  if (!confirm(`Delete "${col.name}"?`)) return;
                   const updates = boqItems.map(item => {
                     const nextCols = (customColumns[item.id] || []).filter((c: any) => c.name !== col.name);
                     const itemValues = { ...(customColumnValues[item.id] || {}) };
-                    Object.keys(itemValues).forEach(rowIdxStr => {
-                      const rowIdx = parseInt(rowIdxStr);
-                      const rowVals = { ...itemValues[rowIdx] };
+                    Object.keys(itemValues).forEach(r => {
+                      const ri = parseInt(r);
+                      const rowVals = { ...itemValues[ri] };
                       delete rowVals[col.name];
-                      itemValues[rowIdx] = rowVals;
+                      itemValues[ri] = rowVals;
                     });
                     setCustomColumns((prev: any) => ({ ...prev, [item.id]: nextCols }));
                     setCustomColumnValues((prev: any) => ({ ...prev, [item.id]: itemValues }));
                     return saveItemLayout(item.id, nextCols, itemValues);
                   });
                   await Promise.all(updates);
-                  toast({ title: "Column Deleted", description: `Column "${col.name}" removed from all products.` });
                 }}
-                title="Delete Column Globally"
-                className="text-gray-400 hover:text-red-600 transition-colors"
-              >
-                <Trash2 size={12} />
-              </button>
+                className="text-gray-400 hover:text-red-500"
+              ><Trash2 size={10} /></button>
             </div>
           )}
         </div>
+
         {(col as any).isPercentage && !isVersionSubmitted && (
-          <div className="mt-2 pt-2 border-t border-purple-200/60 flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-1">
-              <span className="text-[8px] font-black text-purple-400 uppercase tracking-widest">Base Source:</span>
+          <div className="mt-0.5 pt-0.5 border-t border-purple-200/40 flex flex-col gap-0.5">
+            <div className="flex items-center gap-1 overflow-hidden h-4">
+              <span className="text-[6px] font-bold text-gray-400 shrink-0">B:</span>
               <select
-                className="bg-purple-100/50 text-[9px] font-black text-purple-700 uppercase px-1.5 py-0.5 rounded border border-purple-200 outline-none cursor-pointer hover:bg-purple-200/50 transition-colors"
+                className="bg-white/60 text-[8px] font-bold text-purple-700 uppercase px-0.5 py-0 rounded border border-purple-200/50 outline-none h-3.5 w-full truncate"
                 value={globalColSettings[col.name]?.baseSource || "manual"}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => {
-                  const newSource = e.target.value;
-                  handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, newSource, globalColSettings[col.name]?.operator || "%", globalColSettings[col.name]?.multiplierSource || "manual");
-                }}
+                onChange={(e) => handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, e.target.value, globalColSettings[col.name]?.operator || "%", globalColSettings[col.name]?.multiplierSource || "manual")}
               >
-                <option value="manual">Fixed Value</option>
-                <option value="Rate / Unit">E: Rate / Unit</option>
-                <option value="Qty">F: Qty</option>
-                <option value="Total Value (₹)">G: Total Value (₹)</option>
+                <option value="manual">Fixed</option>
+                <option value="Rate / Unit">E: Rate</option>
+                <option value="Unit">F: Unit</option>
+                <option value="Qty">G: Qty</option>
+                <option value="Total Value (₹)">H: Total</option>
+                <option value="Override Rate">I: O.Rate</option>
+                <option value="Override Total">J: O.Total</option>
                 {allCols.filter(c => c.name !== col.name).map((c) => {
-                  const colIdx = allCols.findIndex(cc => cc.name === c.name);
-                  return (
-                    <option key={c.name} value={c.name}>
-                      {getExcelColumnName(colIdx + 7)}: {c.name}
-                    </option>
-                  );
+                  const ci = allCols.findIndex(cc => cc.name === c.name);
+                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 10)}: {c.name.substring(0, 8)}</option>;
                 })}
               </select>
-            </div>
-
-            <div className="flex items-center gap-1.5 bg-purple-50/50 p-1.5 rounded-md border border-purple-100 shadow-inner">
-              <div className="flex-1 min-w-0">
-                {((col as any).baseSource || "manual") === "manual" ? (
-                  <input
-                    type="number"
-                    placeholder="Base ₹"
-                    className="w-full h-7 bg-white border border-purple-200 rounded px-2 text-[11px] font-black text-gray-800 outline-none focus:ring-2 ring-purple-400/50 text-right shadow-sm transition-shadow"
-                    value={globalColSettings[col.name]?.baseValue || ""}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={async (e) => {
-                      const newBase = parseFloat(e.target.value) || 0;
-                      const currentPct = globalColSettings[col.name]?.percentageValue || 0;
-                      const currentSource = globalColSettings[col.name]?.baseSource || "manual";
-                      handleGlobalCalculation(col.name, newBase, currentPct, currentSource);
-                    }}
-                  />
-                ) : (
-                  <div className="h-7 px-2 bg-gradient-to-r from-purple-600 to-indigo-600 rounded flex items-center justify-center shadow-sm">
-                    <span className="text-[9px] font-black text-white uppercase truncate flex items-center gap-1">
-                      <span className="opacity-70 text-[8px]">on</span>
-                      {(col as any).baseSource === "Total Value (₹)" ? "Total Value" : (col as any).baseSource}
-                    </span>
-                  </div>
-                )}
-              </div>
-
               <select
-                className="bg-white border border-purple-200 rounded text-[11px] font-black text-purple-700 outline-none h-7 px-1 cursor-pointer"
+                className="bg-white/60 text-[8px] font-bold text-purple-700 px-0.5 rounded border border-purple-200/50 outline-none h-3.5"
                 value={globalColSettings[col.name]?.operator || "%"}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => {
-                  const newOp = e.target.value;
-                  handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, globalColSettings[col.name]?.baseSource || "manual", newOp, globalColSettings[col.name]?.multiplierSource || "manual");
-                }}
+                onChange={(e) => handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, globalColSettings[col.name]?.baseSource || "manual", e.target.value, globalColSettings[col.name]?.multiplierSource || "manual")}
               >
-                <option value="%">%</option>
-                <option value="*">×</option>
-                <option value="/">÷</option>
-                <option value="+">+</option>
+                <option value="%">%</option><option value="*">×</option><option value="/">÷</option><option value="+">+</option>
               </select>
-
-              <div className="flex items-center gap-1.5 w-auto flex-shrink-0">
-                <select
-                  className="bg-white border border-purple-200 rounded text-[10px] font-black text-purple-700 outline-none h-7 px-1 cursor-pointer"
-                  value={globalColSettings[col.name]?.multiplierSource || "manual"}
-                  onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => {
-                    const newMS = e.target.value;
-                    handleGlobalCalculation(
-                      col.name,
-                      globalColSettings[col.name]?.baseValue || 0,
-                      globalColSettings[col.name]?.percentageValue || 0,
-                      globalColSettings[col.name]?.baseSource || "manual",
-                      globalColSettings[col.name]?.operator || "%",
-                      newMS
-                    );
-                  }}
-                >
-                  <option value="manual">Val</option>
-                  <option value="Rate / Unit">E: Rate / Unit</option>
-                  <option value="Qty">F: Qty</option>
-                  <option value="Total Value (₹)">G: Total Value (₹)</option>
-                  {allCols.filter(c => c.name !== col.name).map((c) => {
-                    const colIdx = allCols.findIndex(cc => cc.name === c.name);
-                    return (
-                      <option key={c.name} value={c.name}>
-                        {getExcelColumnName(colIdx + 7)}: {c.name}
-                      </option>
-                    );
-                  })}
-                </select>
-
-                {(globalColSettings[col.name]?.multiplierSource || "manual") === "manual" && (
+            </div>
+            <div className="flex items-center gap-1 overflow-hidden h-4">
+              <select
+                className="bg-white/60 text-[8px] font-bold text-purple-700 uppercase px-0.5 rounded border border-purple-200/50 outline-none h-3.5 w-full truncate"
+                value={globalColSettings[col.name]?.multiplierSource || "manual"}
+                onChange={(e) => handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, globalColSettings[col.name]?.baseSource || "manual", globalColSettings[col.name]?.operator || "%", e.target.value)}
+              >
+                <option value="manual">Val</option>
+                <option value="Rate / Unit">E: Rate</option>
+                <option value="Unit">F: Unit</option>
+                <option value="Qty">G: Qty</option>
+                <option value="Total Value (₹)">H: Total</option>
+                <option value="Override Rate">I: O.Rate</option>
+                <option value="Override Total">J: O.Total</option>
+                {allCols.filter(c => c.name !== col.name).map((c) => {
+                  const ci = allCols.findIndex(cc => cc.name === c.name);
+                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 10)}: {c.name.substring(0, 8)}</option>;
+                })}
+              </select>
+              {(!globalColSettings[col.name]?.multiplierSource || globalColSettings[col.name]?.multiplierSource === "manual") ? (
+                <div className="relative flex items-center shrink-0">
                   <input
                     type="number"
-                    placeholder="Value"
-                    className="w-14 h-9 bg-white border-2 border-purple-300 rounded-md px-2 text-[13px] font-black text-purple-700 outline-none focus:ring-2 ring-purple-400/50 text-right shadow-sm transition-all"
-                    value={globalColSettings[col.name]?.percentageValue || ""}
-                    onClick={(e) => e.stopPropagation()}
-                    onChange={async (e) => {
-                      const newVal = parseFloat(e.target.value) || 0;
-                      const currentBase = globalColSettings[col.name]?.baseValue || 0;
-                      const currentSource = globalColSettings[col.name]?.baseSource || "manual";
-                      const currentOp = globalColSettings[col.name]?.operator || "%";
-                      const currentMS = globalColSettings[col.name]?.multiplierSource || "manual";
-                      handleGlobalCalculation(col.name, currentBase, newVal, currentSource, currentOp, currentMS);
-                    }}
+                    className="w-8 bg-white text-[8px] font-bold text-gray-700 px-0.5 rounded border border-purple-200 h-3.5 text-right"
+                    value={globalColSettings[col.name]?.percentageValue || 0}
+                    onChange={(e) => handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, parseFloat(e.target.value) || 0, globalColSettings[col.name]?.baseSource || "manual", globalColSettings[col.name]?.operator || "%", "manual")}
                   />
-                )}
-                <span className="text-[13px] text-purple-600 font-black">{globalColSettings[col.name]?.operator || "%"}</span>
-              </div>
+                </div>
+              ) : <div className="w-8 bg-gray-100 rounded border border-gray-200 h-3.5 shrink-0" />}
+
             </div>
           </div>
         )}
@@ -362,6 +298,10 @@ export default function FinalizeBoq() {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
+  const [templates, setTemplates] = useState<BOQTemplate[]>([]);
+  const [isSaveTemplateDialogOpen, setIsSaveTemplateDialogOpen] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
 
   // Per-product custom columns: { [boqItemId]: { name: string, isTotal: boolean, hideColumn?: boolean, hideTotal?: boolean, isPercentage?: boolean, percentageValue?: number, baseValue?: number, baseSource?: string }[] }
   const [customColumns, setCustomColumns] = useState<{ [id: string]: any[] }>({});
@@ -377,6 +317,14 @@ export default function FinalizeBoq() {
   const [hideSystemTotalFooter, setHideSystemTotalFooter] = useState(false);
   // Manual quantity per boqItem: { [id: string]: string }
   const [productQuantities, setProductQuantities] = useState<{ [id: string]: string }>({});
+  // Manual unit per boqItem: { [id: string]: string }
+  const [productUnits, setProductUnits] = useState<{ [id: string]: string }>({});
+  // Manual override rate per boqItem: { [id: string]: string }
+  const [overrideRates, setOverrideRates] = useState<{ [id: string]: string }>({});
+  // Track which column is selected for Grand Total display
+  const [grandTotalColumn, setGrandTotalColumn] = useState<string>("Total Value (₹)");
+  // Global Terms and Conditions
+  const [termsAndConditions, setTermsAndConditions] = useState<string>("");
 
   // Decoupled Global Header State for custom columns
   const [globalColSettings, setGlobalColSettings] = useState<{ [colName: string]: any }>({});
@@ -395,6 +343,36 @@ export default function FinalizeBoq() {
     });
     await Promise.all(updates);
     toast({ title: hide ? "Total Hidden" : "Total Shown", description: `Column total for "${colName}" updated.` });
+  };
+
+  const handleSetGrandTotalColumn = async (colName: string) => {
+    setGrandTotalColumn(colName);
+    // Persist to all items in version
+    const updates = boqItems.map(item => {
+      let td = item.table_data || {};
+      if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+      const updatedTd = { ...td, finalize_grand_total_column: colName };
+      return apiFetch(`/api/boq-items/${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table_data: updatedTd }),
+      });
+    });
+    await Promise.all(updates);
+    toast({ title: "Grand Total Updated", description: `Source changed to "${colName}"` });
+  };
+
+  const handleUpdateTermsAndConditions = async (val: string) => {
+    setTermsAndConditions(val);
+    try {
+      await apiFetch("/api/global-settings/terms_and_conditions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: val }),
+      });
+    } catch (err) {
+      console.error("Failed to update terms and conditions:", err);
+    }
   };
 
   const handleHideColumn = async (colName: string, hide: boolean) => {
@@ -456,6 +434,7 @@ export default function FinalizeBoq() {
     let totalValueSum = 0;
     let totalRateSum = 0;
     let totalQtySum = 0;
+    let overrideTotalSum = 0;
 
     boqItems.forEach(item => {
       let td = item.table_data || {};
@@ -490,6 +469,10 @@ export default function FinalizeBoq() {
       totalValueSum += baseTotalValue;
       totalRateSum += itemRate;
 
+      const overrideRate = parseFloat(overrideRates[item.id] || "0") || 0;
+      const overrideTotalVal = overrideRate * displayQty;
+      overrideTotalSum += overrideTotalVal;
+
       let currentItemRunningTotal = baseTotalValue;
       let accumulator = 0;
       const rowCalculatedValues: { [colName: string]: number } = {};
@@ -509,51 +492,56 @@ export default function FinalizeBoq() {
           const multiplierSource = itemCol.multiplierSource || "manual";
           const manualMultiplier = itemCol.percentageValue || 0;
 
-          let baseVal = 0;
-          if (baseSource === "Total Value (₹)") {
-            baseVal = baseTotalValue;
-          } else if (baseSource === "Rate / Unit") {
-            baseVal = itemRate;
-          } else if (baseSource === "Qty") {
-            baseVal = displayQty;
-          } else if (baseSource && baseSource !== "manual") {
-            // Check if baseSource is a previously calculated column in this row (including isTotal columns)
-            if (rowCalculatedValues[baseSource] !== undefined) {
+          if (baseSource && baseSource !== "manual") {
+            let baseVal = 0;
+            if (baseSource === "Total Value (₹)") {
+              baseVal = baseTotalValue;
+            } else if (baseSource === "Rate / Unit") {
+              baseVal = itemRate;
+            } else if (baseSource === "Qty") {
+              baseVal = displayQty;
+            } else if (baseSource === "Override Rate") {
+              baseVal = parseFloat(overrideRates[item.id] || "0") || 0;
+            } else if (baseSource === "Override Total") {
+              baseVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
+            } else if (rowCalculatedValues[baseSource] !== undefined) {
               baseVal = rowCalculatedValues[baseSource];
             } else {
               const valStr = customColumnValues[item.id]?.[0]?.[baseSource] || "0";
               baseVal = parseFloat(valStr) || 0;
             }
-          } else {
-            baseVal = itemCol.baseValue || 0;
-          }
 
-          let multiplierVal = 0;
-          if (multiplierSource === "manual") {
-            multiplierVal = manualMultiplier;
-          } else if (multiplierSource === "Total Value (₹)") {
-            multiplierVal = baseTotalValue;
-          } else if (multiplierSource === "Rate / Unit") {
-            multiplierVal = itemRate;
-          } else if (multiplierSource === "Qty") {
-            multiplierVal = displayQty;
-          } else if (rowCalculatedValues[multiplierSource] !== undefined) {
-            multiplierVal = rowCalculatedValues[multiplierSource];
-          } else {
-            const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
-            multiplierVal = parseFloat(mValStr) || 0;
-          }
+            let multiplierVal = 0;
+            if (multiplierSource === "manual") {
+              multiplierVal = manualMultiplier;
+            } else if (multiplierSource === "Total Value (₹)") {
+              multiplierVal = baseTotalValue;
+            } else if (multiplierSource === "Rate / Unit") {
+              multiplierVal = itemRate;
+            } else if (multiplierSource === "Qty") {
+              multiplierVal = displayQty;
+            } else if (multiplierSource === "Override Rate") {
+              multiplierVal = parseFloat(overrideRates[item.id] || "0") || 0;
+            } else if (multiplierSource === "Override Total") {
+              multiplierVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
+            } else if (rowCalculatedValues[multiplierSource] !== undefined) {
+              multiplierVal = rowCalculatedValues[multiplierSource];
+            } else {
+              const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
+              multiplierVal = parseFloat(mValStr) || 0;
+            }
 
-          if (operator === "%") {
-            val = baseVal * (multiplierVal / 100);
-          } else if (operator === "*") {
-            val = baseVal * multiplierVal;
-          } else if (operator === "/") {
-            val = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
-          } else if (operator === "+") {
-            val = baseVal + multiplierVal;
+            if (operator === "%") {
+              val = baseVal * (multiplierVal / 100);
+            } else if (operator === "*") {
+              val = baseVal * multiplierVal;
+            } else if (operator === "/") {
+              val = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
+            } else if (operator === "+") {
+              val = baseVal + multiplierVal;
+            }
           } else {
-            // Fallback to manual value if operator is unknown and source is manual
+            // Manual entry column
             val = parseFloat(customColumnValues[item.id]?.[0]?.[col.name] || "0") || 0;
           }
 
@@ -564,8 +552,8 @@ export default function FinalizeBoq() {
       });
     });
 
-    return { totals, totalValueSum, totalRateSum, totalQtySum };
-  }, [boqItems, allCols, customColumns, customColumnValues, productQuantities]);
+    return { totals, totalValueSum, totalRateSum, totalQtySum, overrideTotalSum };
+  }, [boqItems, allCols, customColumns, customColumnValues, productQuantities, overrideRates]);
 
   const handleColumnReorder = async (newOrder: typeof allCols) => {
     // Optimistically update local state for all items
@@ -640,6 +628,33 @@ export default function FinalizeBoq() {
     };
 
     loadProjects();
+  }, []);
+
+  // Load templates & global settings on mount
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        const [templatesResp, settingsResp] = await Promise.all([
+          apiFetch("/api/boq-templates"),
+          apiFetch("/api/global-settings")
+        ]);
+
+        if (templatesResp.ok) {
+          const data = await templatesResp.json();
+          setTemplates(data.templates || []);
+        }
+
+        if (settingsResp.ok) {
+          const settings = await settingsResp.json();
+          if (settings.terms_and_conditions) {
+            setTermsAndConditions(settings.terms_and_conditions);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load initial data:", err);
+      }
+    };
+    loadInitialData();
   }, []);
 
   // Load versions when project is selected
@@ -760,13 +775,17 @@ export default function FinalizeBoq() {
             const restoredVals: { [id: string]: { [rowIdx: number]: { [col: string]: string } } } = {};
             const restoredDescs: { [id: string]: string } = {};
             const restoredQtys: { [id: string]: string } = {};
+            const restoredUnits: { [id: string]: string } = {};
+            const restoredOverrideRates: { [id: string]: string } = {};
             let sysTotalHidden = false;
+            let restoredGrandTotalCol = "Total Value (₹)";
 
             for (const item of items) {
               let td = item.table_data || {};
               if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
 
               if (td.finalize_hide_system_total) sysTotalHidden = true;
+              if (td.finalize_grand_total_column) restoredGrandTotalCol = td.finalize_grand_total_column;
 
               if (Array.isArray(td.finalize_columns) && td.finalize_columns.length > 0) {
                 // Backward compatibility: convert string arrays to objects
@@ -783,6 +802,38 @@ export default function FinalizeBoq() {
               if (td.finalize_qty !== undefined && td.finalize_qty !== null) {
                 restoredQtys[item.id] = String(td.finalize_qty);
               }
+              if (td.finalize_unit !== undefined && td.finalize_unit !== null) {
+                restoredUnits[item.id] = String(td.finalize_unit);
+              }
+              if (td.finalize_override_rate !== undefined && td.finalize_override_rate !== null) {
+                restoredOverrideRates[item.id] = String(td.finalize_override_rate);
+              }
+            }
+
+            // Backfill HSN/SAC codes from products API for existing items
+            try {
+              const productsResp = await apiFetch("/api/products");
+              if (productsResp.ok) {
+                const productsData = await productsResp.json();
+                const productsList: any[] = productsData.products || [];
+                const productsById: { [id: string]: any } = {};
+                productsList.forEach((p: any) => { productsById[p.id] = p; });
+
+                for (const item of items) {
+                  let td = item.table_data || {};
+                  if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+                  if (td.product_id && !td.hsn_sac_code) {
+                    const prod = productsById[td.product_id];
+                    if (prod && prod.tax_code_value) {
+                      td.hsn_sac_code = prod.tax_code_value;
+                      td.hsn_sac_type = prod.tax_code_type || null;
+                      item.table_data = td;
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn("Failed to backfill HSN/SAC codes in FinalizeBoq:", e);
             }
             if (Object.keys(restoredCols).length > 0) {
               setCustomColumns(restoredCols);
@@ -803,7 +854,10 @@ export default function FinalizeBoq() {
             if (Object.keys(restoredVals).length > 0) setCustomColumnValues(restoredVals);
             if (Object.keys(restoredDescs).length > 0) setProductDescriptions(restoredDescs);
             if (Object.keys(restoredQtys).length > 0) setProductQuantities(restoredQtys);
+            if (Object.keys(restoredUnits).length > 0) setProductUnits(restoredUnits);
+            if (Object.keys(restoredOverrideRates).length > 0) setOverrideRates(restoredOverrideRates);
             setHideSystemTotalFooter(sysTotalHidden);
+            setGrandTotalColumn(restoredGrandTotalCol);
           } catch (e) {
             toast({ title: "Error", description: "Failed to parse BOM items response", variant: "destructive" });
             console.error("BOM items parse error:", e);
@@ -958,7 +1012,7 @@ export default function FinalizeBoq() {
     });
   };
 
-  const saveItemLayout = async (boqItemId: string, updatedCols?: any[], updatedVals?: any, updatedDesc?: string, updatedQty?: string) => {
+  const saveItemLayout = async (boqItemId: string, updatedCols?: any[], updatedVals?: any, updatedDesc?: string, updatedQty?: string, updatedOverrideRate?: string, updatedUnit?: string) => {
     try {
       const boqItem = boqItems.find(i => i.id === boqItemId);
       if (!boqItem) return;
@@ -974,7 +1028,10 @@ export default function FinalizeBoq() {
         finalize_column_values: updatedVals !== undefined ? updatedVals : (customColumnValues[boqItemId] || {}),
         finalize_description: updatedDesc !== undefined ? updatedDesc : (productDescriptions[boqItemId] ?? ""),
         finalize_qty: updatedQty !== undefined ? updatedQty : (productQuantities[boqItemId] ?? null),
+        finalize_unit: updatedUnit !== undefined ? updatedUnit : (productUnits[boqItemId] ?? null),
+        finalize_override_rate: updatedOverrideRate !== undefined ? updatedOverrideRate : (overrideRates[boqItemId] ?? null),
         finalize_hide_system_total: hideSystemTotalFooter,
+        finalize_grand_total_column: grandTotalColumn,
       };
 
       const resp = await apiFetch(`/api/boq-items/${boqItemId}`, {
@@ -1092,6 +1149,10 @@ export default function FinalizeBoq() {
         rowBase = itemRate;
       } else if (baseSource === "Qty") {
         rowBase = displayQty;
+      } else if (baseSource === "Override Rate") {
+        rowBase = parseFloat(overrideRates[item.id] || "0") || 0;
+      } else if (baseSource === "Override Total") {
+        rowBase = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
       } else if (baseSource !== "manual") {
         const baseCol = itemCols.find(c => c.name === baseSource);
         if (baseCol?.isTotal) {
@@ -1126,6 +1187,10 @@ export default function FinalizeBoq() {
         rowMultiplierVal = itemRate;
       } else if (multiplierSource === "Qty") {
         rowMultiplierVal = displayQty;
+      } else if (multiplierSource === "Override Rate") {
+        rowMultiplierVal = parseFloat(overrideRates[item.id] || "0") || 0;
+      } else if (multiplierSource === "Override Total") {
+        rowMultiplierVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
       } else {
         const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
         rowMultiplierVal = parseFloat(mValStr) || 0;
@@ -1184,31 +1249,33 @@ export default function FinalizeBoq() {
     const displayQty = manualQtyStr !== undefined ? (parseFloat(manualQtyStr) || 0) : itemQty;
     const itemRate = itemQty > 0 ? itemTotal / itemQty : (itemTotal || 0);
 
-    if (baseSource !== "manual") {
-      if (baseSource === "Total Value (₹)") {
-        rowBase = itemRate * displayQty;
-      } else if (baseSource === "Rate / Unit") {
-        rowBase = itemRate;
-      } else if (baseSource === "Qty") {
-        rowBase = displayQty;
-      } else {
-        const baseCol = itemCols.find(c => c.name === baseSource);
-        if (baseCol?.isTotal) {
-          let runningTotal = itemRate * displayQty;
-          let accumulator = 0;
-          for (const c of itemCols) {
-            if (c.name === baseSource) {
-              runningTotal += accumulator;
-              break;
-            }
-            const val = parseFloat(customColumnValues[item.id]?.[0]?.[c.name] || "0") || 0;
-            accumulator += val;
+    if (baseSource === "Total Value (₹)") {
+      rowBase = itemRate * displayQty;
+    } else if (baseSource === "Rate / Unit") {
+      rowBase = itemRate;
+    } else if (baseSource === "Qty") {
+      rowBase = displayQty;
+    } else if (baseSource === "Override Rate") {
+      rowBase = parseFloat(overrideRates[item.id] || "0") || 0;
+    } else if (baseSource === "Override Total") {
+      rowBase = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
+    } else if (baseSource !== "manual") {
+      const baseCol = itemCols.find(c => c.name === baseSource);
+      if (baseCol?.isTotal) {
+        let runningTotal = itemRate * displayQty;
+        let accumulator = 0;
+        for (const c of itemCols) {
+          if (c.name === baseSource) {
+            runningTotal += accumulator;
+            break;
           }
-          rowBase = runningTotal;
-        } else {
-          const valStr = customColumnValues[item.id]?.[0]?.[baseSource] || "0";
-          rowBase = parseFloat(valStr) || 0;
+          const val = parseFloat(customColumnValues[item.id]?.[0]?.[c.name] || "0") || 0;
+          accumulator += val;
         }
+        rowBase = runningTotal;
+      } else {
+        const valStr = customColumnValues[item.id]?.[0]?.[baseSource] || "0";
+        rowBase = parseFloat(valStr) || 0;
       }
     }
 
@@ -1221,11 +1288,14 @@ export default function FinalizeBoq() {
       rowMultiplierVal = itemRate;
     } else if (multiplierSource === "Qty") {
       rowMultiplierVal = displayQty;
+    } else if (multiplierSource === "Override Rate") {
+      rowMultiplierVal = parseFloat(overrideRates[item.id] || "0") || 0;
+    } else if (multiplierSource === "Override Total") {
+      rowMultiplierVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
     } else {
       const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
       rowMultiplierVal = parseFloat(mValStr) || 0;
     }
-
     let calculated = 0;
     if (operator === "%") calculated = rowBase * (rowMultiplierVal / 100);
     else if (operator === "*") calculated = rowBase * rowMultiplierVal;
@@ -1435,6 +1505,72 @@ export default function FinalizeBoq() {
     }
   };
 
+  const handleSaveAsTemplate = async () => {
+    if (!newTemplateName.trim()) {
+      toast({ title: "Error", description: "Template name is required", variant: "destructive" });
+      return;
+    }
+
+    const firstItemId = boqItems[0]?.id;
+    if (!firstItemId) {
+      toast({ title: "Error", description: "No items to capture configuration from", variant: "destructive" });
+      return;
+    }
+
+    const config = {
+      columns: customColumns[firstItemId] || [],
+      globalColSettings: globalColSettings,
+    };
+
+    try {
+      const resp = await apiFetch("/api/boq-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newTemplateName, config }),
+      });
+
+      if (resp.ok) {
+        toast({ title: "Success", description: "Template saved successfully" });
+        setIsSaveTemplateDialogOpen(false);
+        setNewTemplateName("");
+        loadTemplates();
+      } else {
+        throw new Error("Save failed");
+      }
+    } catch (e) {
+      console.error("Save template error:", e);
+      toast({ title: "Error", description: "Failed to save template", variant: "destructive" });
+    }
+  };
+
+  const handleApplyTemplate = async (templateId: string) => {
+    const template = templates.find(t => t.id === templateId);
+    if (!template) return;
+
+    if (!confirm(`Apply template "${template.name}"? This will overwrite existing column configurations and formulas for ALL products.`)) {
+      return;
+    }
+
+    try {
+      const config = typeof template.config === 'string' ? JSON.parse(template.config) : template.config;
+      const { columns, globalColSettings: newGlobalSettings } = config;
+
+      if (newGlobalSettings) setGlobalColSettings(newGlobalSettings);
+
+      const updates = boqItems.map(item => {
+        setCustomColumns(prev => ({ ...prev, [item.id]: columns }));
+        return saveItemLayout(item.id, columns);
+      });
+
+      await Promise.all(updates);
+      toast({ title: "Template Applied", description: `Applied "${template.name}" configuration to all products.` });
+      setSelectedTemplateId("");
+    } catch (e) {
+      console.error("Apply template error:", e);
+      toast({ title: "Error", description: "Failed to apply template", variant: "destructive" });
+    }
+  };
+
   const handleDownloadExcel = () => {
     if (!selectedProjectId || boqItems.length === 0) {
       toast({ title: "Info", description: "No BOM items to download", variant: "default" });
@@ -1447,8 +1583,11 @@ export default function FinalizeBoq() {
       "Product / Material",
       "Description / Location",
       "Rate / Unit",
+      "Unit",
       "Qty",
       "Total Value (₹)",
+      "Override Rate",
+      "Override Total",
       ...allCols.map(c => c.name)
     ];
 
@@ -1526,9 +1665,13 @@ export default function FinalizeBoq() {
           "S.No",
           "Product / Material",
           "Description / Location",
+          "HSN/SAC",
           "Rate / Unit",
+          "Unit",
           "Qty",
           "Total Value (₹)",
+          "Override Rate",
+          "Override Total",
           ...allCols.map(c => c.name)
         ];
 
@@ -1536,9 +1679,13 @@ export default function FinalizeBoq() {
           if (colName === "S.No") rowValues[colName] = boqIdx + 1;
           else if (colName === "Product / Material") rowValues[colName] = productName;
           else if (colName === "Description / Location") rowValues[colName] = manualDesc;
+          else if (colName === "HSN/SAC") rowValues[colName] = tableData.hsn_sac_code || "—";
           else if (colName === "Rate / Unit") rowValues[colName] = Number(rateSqft.toFixed(2));
+          else if (colName === "Unit") rowValues[colName] = currentStep11Items[0]?.unit || tableData.unit || "";
           else if (colName === "Qty") rowValues[colName] = Number(displayQty.toFixed(2));
           else if (colName === "Total Value (₹)") rowValues[colName] = Number(totalVal.toFixed(2));
+          else if (colName === "Override Rate") rowValues[colName] = Number((parseFloat(overrideRates[boqItem.id] || "0") || 0).toFixed(2));
+          else if (colName === "Override Total") rowValues[colName] = Number(((parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty).toFixed(2));
           else {
             const currentCol = allCols.find(c => c.name === colName);
             if (!currentCol) {
@@ -1656,9 +1803,13 @@ export default function FinalizeBoq() {
         "S.No",
         "Product / Material",
         "Description",
+        "HSN/SAC",
         "Rate (₹)",
+        "Unit",
         "Qty",
         "Total (₹)",
+        "Override Rate (₹)",
+        "Override Total (₹)",
         ...allCols.map(c => c.name)
       ];
 
@@ -1728,9 +1879,13 @@ export default function FinalizeBoq() {
           (boqIdx + 1).toString(),
           productName,
           manualDesc,
+          tableData.hsn_sac_code || "—",
           rateSqft.toFixed(2),
-          (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (step11Items[0]?.qty || 0))).toFixed(2),
+          currentStep11Items[0]?.unit || tableData.unit || "",
+          (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (currentStep11Items[0]?.qty || 0))).toFixed(2),
           totalVal.toFixed(2),
+          (parseFloat(overrideRates[boqItem.id] || "0") || 0).toFixed(2),
+          ((parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty).toFixed(2),
           ...customVals
         ]);
       });
@@ -1973,54 +2128,79 @@ export default function FinalizeBoq() {
                       </Button>
                     )}
                   </div>
-                  {selectedVersion && (
-                    <div className="space-y-4">
-                      <div className="text-sm text-gray-600 space-y-1 bg-blue-50 p-3 rounded">
-                        <div>
-                          <strong>Project:</strong>{" "}
-                          {selectedVersion.project_name || "Unknown"}
-                        </div>
-                        <div>
-                          <strong>Version:</strong> V
-                          {selectedVersion.version_number}
-                        </div>
-                        {selectedVersion.project_client && (
-                          <div>
-                            <strong>Client:</strong>{" "}
-                            {selectedVersion.project_client}
-                          </div>
-                        )}
-                        {selectedVersion.project_location && (
-                          <div>
-                            <strong>Location:</strong>{" "}
-                            {selectedVersion.project_location}
-                          </div>
-                        )}
-                        {isVersionSubmitted && (
-                          <span className="inline-block bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-semibold">
-                            Submitted (Locked)
-                          </span>
-                        )}
-                        {!isVersionSubmitted && (
-                          <span className="inline-block bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-semibold">
-                            Draft (Editable)
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-4 bg-white/50 p-2 rounded border border-blue-100">
-                        <Button variant="outline" size="sm" onClick={handleDownloadExcel} className="border-green-600 text-green-700 hover:bg-green-50">
-                          Download as Excel
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={handleDownloadPdf} className="border-red-600 text-red-700 hover:bg-red-50">
-                          Download as PDF
-                        </Button>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
-                {/* Add Product and Add Item buttons */}
+                {/* BOQ Templates Section */}
+                <div className="space-y-3 pt-4 border-t border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-gray-700">BOQ Column Templates</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setIsSaveTemplateDialogOpen(true)}
+                      className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 text-[11px] font-bold uppercase tracking-wider"
+                    >
+                      Save Current as Template
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <Select
+                      value={selectedTemplateId}
+                      onValueChange={handleApplyTemplate}
+                    >
+                      <SelectTrigger className="flex-1 bg-gray-50/50 border-gray-200">
+                        <SelectValue placeholder={templates.length === 0 ? "No templates saved" : "Apply saved template..."} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {templates.map((t) => (
+                          <SelectItem value={t.id} key={t.id}>
+                            {t.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <p className="text-[10px] text-gray-500 italic">
+                    Applying a template will update columns and formulas for all items in this version.
+                  </p>
+                </div>
+                {selectedVersion && (
+                  <div className="space-y-4">
+                    <div className="text-sm text-gray-600 space-y-1 bg-blue-50 p-3 rounded">
+                      <div>
+                        <strong>Project:</strong>{" "}
+                        {selectedVersion.project_name || "Unknown"}
+                      </div>
+                      <div>
+                        <strong>Version:</strong> V
+                        {selectedVersion.version_number}
+                      </div>
+                      {selectedVersion.project_client && (
+                        <div>
+                          <strong>Client:</strong>{" "}
+                          {selectedVersion.project_client}
+                        </div>
+                      )}
+                      {selectedVersion.project_location && (
+                        <div>
+                          <strong>Location:</strong>{" "}
+                          {selectedVersion.project_location}
+                        </div>
+                      )}
+                      {isVersionSubmitted && (
+                        <span className="inline-block bg-yellow-100 text-yellow-800 px-2 py-1 rounded text-xs font-semibold">
+                          Submitted (Locked)
+                        </span>
+                      )}
+                      {!isVersionSubmitted && (
+                        <span className="inline-block bg-green-100 text-green-800 px-2 py-1 rounded text-xs font-semibold">
+                          Draft (Editable)
+                        </span>
+                      )}
+                    </div>
+
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -2038,10 +2218,13 @@ export default function FinalizeBoq() {
                 { label: "C: Product / Material", name: "Product / Material" },
                 { label: "D: Description / Location", name: "Description / Location" },
                 { label: "E: Rate / Unit", name: "Rate / Unit" },
-                { label: "F: Qty", name: "Qty" },
-                { label: "G: Total Value (₹)", name: "Total Value (₹)" },
+                { label: "F: Unit", name: "Unit" },
+                { label: "G: Qty", name: "Qty" },
+                { label: "H: Total Value (₹)", name: "Total Value (₹)" },
+                { label: "I: Override Rate (₹)", name: "Override Rate" },
+                { label: "J: Override Total (₹)", name: "Override Total" },
                 ...allCols.map((c, idx) => ({
-                  label: `${getExcelColumnName(idx + 7)}: ${c.name}`,
+                  label: `${getExcelColumnName(idx + 10)}: ${c.name}`,
                   name: c.name
                 }))
               ].map(col => (
@@ -2056,7 +2239,8 @@ export default function FinalizeBoq() {
                           // maintain table order
                           const order = [
                             "S.No", "Product / Material", "Description / Location",
-                            "Rate / Unit", "Qty", "Total Value (₹)",
+                            "Rate / Unit", "Unit", "Qty", "Total Value (₹)",
+                            "Override Rate", "Override Total",
                             ...allCols.map(c => c.name)
                           ];
                           return order.filter(o => next.includes(o));
@@ -2121,7 +2305,7 @@ export default function FinalizeBoq() {
               <Card className="border-2 border-gray-200 overflow-hidden shadow-sm">
                 {!isVersionSubmitted && (
                   <div className="flex items-center gap-3 p-4 bg-gray-50/80 border-b overflow-x-auto whitespace-nowrap scrollbar-hide">
-                    <span className="text-[12px] font-black uppercase tracking-widest text-gray-500 mr-2 flex-shrink-0">Unified BOM Actions:</span>
+                    <span className="text-[12px] font-semibold uppercase tracking-widest text-gray-500 mr-2 flex-shrink-0">Unified BOM Actions:</span>
                     <Button
                       variant="outline"
                       size="sm"
@@ -2227,7 +2411,7 @@ export default function FinalizeBoq() {
 
                 {!isVersionSubmitted && hiddenCols.length > 0 && (
                   <div className="flex items-center gap-2 p-3 bg-orange-50/50 border-b border-orange-100 overflow-x-auto whitespace-nowrap scrollbar-hide">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-orange-600 mr-2 flex-shrink-0">Hidden Columns:</span>
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-orange-600 mr-2 flex-shrink-0">Hidden Columns:</span>
                     {hiddenCols.map(colName => (
                       <button
                         key={colName}
@@ -2250,26 +2434,34 @@ export default function FinalizeBoq() {
                         <th className="border-r py-1 w-10 text-center">A</th>
                         <th className="border-r py-1 w-12 text-center text-blue-600">B</th>
                         <th className="border-r py-1 text-center font-extrabold">C</th>
-                        <th className="border-r py-1 text-center">D</th>
+                        <th className="border-r py-1 text-center font-bold">D</th>
                         <th className="border-r py-1 text-center font-bold">E</th>
-                        <th className="border-r py-1 text-center font-bold w-52 min-w-[130px]">F</th>
-                        <th className="border-r py-1 text-center text-green-700">G</th>
+                        <th className="border-r py-1 text-center font-bold">F</th>
+                        <th className="border-r py-1 text-center font-bold">G</th>
+                        <th className="border-r py-1 text-center font-bold">H</th>
+                        <th className="border-r py-1 text-center text-green-700">I</th>
+                        <th className="border-r py-1 text-center text-blue-700">J</th>
+                        <th className="border-r py-1 text-center text-green-700">K</th>
                         {allCols.map((_, idx) => (
-                          <th key={idx} className="border-r py-1 text-center text-purple-700">
-                            {getExcelColumnName(idx + 7)}
+                          <th key={idx} className="border-r py-0.5 text-center text-purple-700 text-[8px] font-bold bg-purple-50/20">
+                            {getExcelColumnName(idx + 11)}
                           </th>
                         ))}
                       </tr>
-                      <tr className="bg-gray-100/80 border-b border-gray-200 text-[12px] font-black text-gray-700 uppercase tracking-widest shadow-sm">
-                        <th className="border-r px-2 py-4 text-center w-10">
+                      <tr className="bg-gray-100/80 border-b border-gray-200 text-[12px] font-semibold text-gray-700 uppercase tracking-widest shadow-sm">
+                        <th className="border-r px-2 py-1.5 text-center w-10">
                           <GripVertical size={16} className="mx-auto text-gray-400" />
                         </th>
-                        <th className="border-r px-3 py-4 text-left w-12">#</th>
-                        <th className="border-r px-4 py-4 text-left min-w-[200px]">Product / Material</th>
-                        <th className="border-r px-4 py-4 text-left min-w-[250px]">Description / Location</th>
-                        <th className="border-r px-5 py-4 text-right w-36">Rate / Unit</th>
-                        <th className="border-r px-5 py-4 text-center w-52 min-w-[130px]">Qty</th>
-                        <th className="border-r px-5 py-4 text-right w-40 text-green-900 bg-green-50/50">Total Value (₹)</th>
+                        <th className="border-r px-1 py-1.5 text-left min-w-[30px] w-10 text-[10px]">S.No</th>
+                        <th className="border-r px-1.5 py-1.5 text-left min-w-[200px] text-[10px]">Product / Material</th>
+                        <th className="border-r px-1.5 py-1.5 text-left min-w-[200px] text-[10px]">Description / Location</th>
+                        <th className="border-r px-1 py-1.5 text-center w-28 text-[10px]">HSN/SAC</th>
+                        <th className="border-r px-1 py-1.5 text-right w-24 text-[10px]">Rate</th>
+                        <th className="border-r px-1 py-1.5 text-center w-20 text-[10px]">Unit</th>
+                        <th className="border-r px-1 py-1.5 text-center w-28 text-[10px]">Qty</th>
+                        <th className="border-r px-1 py-1.5 text-right w-28 text-green-900 bg-green-50/30 text-[10px]">Total (₹)</th>
+                        <th className="border-r px-1 py-1.5 text-right w-28 text-blue-900 bg-blue-50/30 text-[10px]">O.Rate (₹)</th>
+                        <th className="border-r px-1 py-1.5 text-right w-28 text-green-900 bg-green-50/30 text-[10px]">O.Total (₹)</th>
                         <Reorder.Group
                           axis="x"
                           values={allCols}
@@ -2373,7 +2565,7 @@ export default function FinalizeBoq() {
                             as="tr"
                             className={`hover:bg-blue-50/40 cursor-default transition-colors border-b border-gray-100 ${isSelected ? "bg-blue-50/60" : "bg-white"}`}
                           >
-                            <td className="border-r px-2 py-3 text-center bg-gray-50/50 align-middle">
+                            <td className="border-r px-2 py-1.5 text-center bg-gray-50/50 align-middle">
                               <div className="flex flex-col items-center gap-1">
                                 <span className="text-[10px] font-bold text-gray-500">{boqIdx + 1}</span>
                                 <div className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-blue-400 transition-colors flex items-center justify-center">
@@ -2381,7 +2573,7 @@ export default function FinalizeBoq() {
                                 </div>
                               </div>
                             </td>
-                            <td className="border-r px-3 py-3 text-center align-middle">
+                            <td className="border-r px-2 py-1.5 text-center align-middle">
                               <div className="flex flex-col items-center gap-2">
                                 <input
                                   type="checkbox"
@@ -2398,39 +2590,67 @@ export default function FinalizeBoq() {
                                 />
                               </div>
                             </td>
-                            <td className="border-r px-3 py-3 font-medium text-gray-800 text-sm align-middle">
+                            <td className="border-r px-1.5 py-1 font-medium text-gray-800 text-[10px] align-middle">
                               <div className="flex flex-col gap-0.5">
-                                <div className="font-bold">{productName}</div>
-                                {category && <div className="text-[9px] text-blue-500 font-extrabold uppercase tracking-tight">{category}</div>}
+                                <div className="font-bold leading-tight line-clamp-2">{productName}</div>
+                                {category && <div className="text-[8px] text-blue-500 font-extrabold uppercase tracking-tighter">{category}</div>}
                               </div>
                             </td>
-                            <td className="border-r px-3 py-2 align-middle">
+                            <td className="border-r px-1.5 py-1 align-middle">
                               <textarea
-                                value={manualDesc}
+                                value={manualDesc || tableData.finalize_description || ""}
                                 disabled={isVersionSubmitted}
                                 onChange={e => setProductDescriptions(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
                                 onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, productDescriptions[boqItem.id])}
                                 rows={2}
-                                className="w-full border-none rounded p-1.5 text-xs focus:ring-1 ring-blue-300 outline-none bg-transparent resize-y min-h-[45px] leading-tight"
-                                placeholder="Manual description..."
+                                className="w-full border-none rounded p-1 text-[10px] focus:ring-1 ring-blue-300 outline-none bg-transparent resize-y min-h-[35px] leading-tight"
+                                placeholder="Description..."
                               />
                             </td>
-                            <td className="border-r px-4 py-3 text-right font-black text-gray-500 align-middle">
+                            <td className="border-r px-2 py-1 text-center font-semibold text-gray-700 text-[10px] align-middle bg-gray-50/30">
+                              {tableData.hsn_sac_code || "—"}
+                            </td>
+                            <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-500 text-[10px] align-middle">
                               ₹{rateSqft.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
-                            <td className="border-r px-4 py-3 text-center font-black text-gray-800 align-middle min-w-[130px]">
+                            <td className="border-r px-2 py-1 text-center font-medium text-gray-800 align-middle w-24 min-w-[80px]">
+                              <input
+                                type="text"
+                                value={productUnits[boqItem.id] ?? (currentStep11Items[0]?.unit || tableData.unit || "")}
+                                disabled={isVersionSubmitted}
+                                onChange={e => setProductUnits(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
+                                onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, undefined, undefined, productUnits[boqItem.id])}
+                                className="w-full border-none rounded p-0.5 text-[10px] focus:ring-1 ring-blue-300 outline-none bg-transparent text-center font-semibold h-7"
+                                placeholder="Unit"
+                              />
+                            </td>
+                            <td className="border-r px-2 py-1 text-center font-semibold text-gray-800 align-middle w-32 min-w-[100px]">
                               <input
                                 type="number"
                                 value={productQuantities[boqItem.id] ?? (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (currentStep11Items[0]?.qty || 0))}
                                 disabled={isVersionSubmitted}
                                 onChange={e => setProductQuantities(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
                                 onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, productQuantities[boqItem.id])}
-                                className="w-full border-none rounded p-2 text-sm focus:ring-1 ring-blue-300 outline-none bg-blue-100/50 text-center font-black"
+                                className="w-full border-none rounded p-0.5 text-[10px] focus:ring-1 ring-blue-300 outline-none bg-blue-100/50 text-center font-semibold h-7"
                                 placeholder="Qty"
                               />
                             </td>
-                            <td className="border-r px-4 py-3 text-right font-black text-green-700 bg-green-50/20 align-middle">
+                            <td className="border-r px-2 py-1.5 text-right font-semibold text-green-700 bg-green-50/20 align-middle text-[10px] w-32">
                               ₹{(rateSqft * (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? Number(tableData.targetRequiredQty) : Number(currentStep11Items[0]?.qty || 0)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="border-r px-2 py-1 text-center font-semibold text-gray-800 align-middle w-32 min-w-[100px]">
+                              <input
+                                type="number"
+                                value={overrideRates[boqItem.id] ?? ""}
+                                disabled={isVersionSubmitted}
+                                onChange={e => setOverrideRates(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
+                                onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, undefined, overrideRates[boqItem.id])}
+                                className="w-full border-none rounded p-0.5 text-[10px] focus:ring-1 ring-blue-300 outline-none bg-blue-50/50 text-right font-semibold h-7 px-2"
+                                placeholder="0.00"
+                              />
+                            </td>
+                            <td className="border-r px-2 py-1.5 text-right font-semibold text-green-800 bg-green-50/40 align-middle text-[10px] w-32">
+                              ₹{((parseFloat(overrideRates[boqItem.id] || "0") || 0) * (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? Number(tableData.targetRequiredQty) : Number(currentStep11Items[0]?.qty || 0)))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
                             {/* Custom columns */}
                             {(() => {
@@ -2448,7 +2668,7 @@ export default function FinalizeBoq() {
                                   accumulator = 0;
                                   rowCalculatedValues[col.name] = itemTotal;
                                   return (
-                                    <td key={`${col.name}-${idx}`} className="border-r px-4 py-3 text-right font-black text-green-900 bg-green-100/40">
+                                    <td key={`${col.name}-${idx}`} className="border-r px-2 py-1.5 text-right font-semibold text-green-900 bg-green-100/40 text-[10px]">
                                       ₹{itemTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </td>
                                   );
@@ -2469,8 +2689,14 @@ export default function FinalizeBoq() {
                                       baseVal = baseTotalValue;
                                     } else if (baseSource === "Rate / Unit") {
                                       baseVal = rateSqft;
+                                    } else if (baseSource === "Unit") {
+                                      baseVal = 0; // Units aren't numeric
                                     } else if (baseSource === "Qty") {
                                       baseVal = displayQty;
+                                    } else if (baseSource === "Override Rate") {
+                                      baseVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+                                    } else if (baseSource === "Override Total") {
+                                      baseVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
                                     } else if (rowCalculatedValues[baseSource] !== undefined) {
                                       baseVal = rowCalculatedValues[baseSource];
                                     } else {
@@ -2486,6 +2712,10 @@ export default function FinalizeBoq() {
                                       multiplierVal = rateSqft;
                                     } else if (multiplierSource === "Qty") {
                                       multiplierVal = displayQty;
+                                    } else if (multiplierSource === "Override Rate") {
+                                      multiplierVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+                                    } else if (multiplierSource === "Override Total") {
+                                      multiplierVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
                                     } else if (rowCalculatedValues[multiplierSource] !== undefined) {
                                       multiplierVal = rowCalculatedValues[multiplierSource];
                                     } else {
@@ -2508,87 +2738,97 @@ export default function FinalizeBoq() {
                                   const itemOp = (itemCol as any).operator || "%";
 
                                   return (
-                                    <td key={`${col.name}-${idx}`} className="border-r px-3 py-2 bg-purple-50/10 relative group/cell align-middle">
-                                      {isCalculated && (
-                                        <div className="absolute left-1 top-1 flex flex-col gap-0.5 z-10 pointer-events-none group-hover/cell:pointer-events-auto">
-                                          <div className="flex items-center gap-1.5 opacity-0 group-hover/cell:opacity-100 focus-within:opacity-100 transition-opacity bg-white/90 p-1 rounded-md shadow-sm border border-purple-100">
-                                            <select
-                                              className="bg-white border border-purple-300 rounded text-[9px] font-black text-purple-700 outline-none h-6 px-1 cursor-pointer"
-                                              value={(itemCol as any).multiplierSource || "manual"}
-                                              disabled={isVersionSubmitted}
-                                              onChange={(e) => {
-                                                handleItemCalculation(boqItem.id, col.name, itemMultiplier, itemOp, e.target.value);
-                                              }}
-                                            >
-                                              <option value="manual">Val</option>
-                                              <option value="Rate / Unit">E: Rate / Unit</option>
-                                              <option value="Qty">F: Qty</option>
-                                              <option value="Total Value (₹)">G: Total Value (₹)</option>
-                                              {allCols.filter(c => c.name !== col.name).map((c) => {
-                                                const colIdx = allCols.findIndex(cc => cc.name === c.name);
-                                                return (
-                                                  <option key={c.name} value={c.name}>
-                                                    {getExcelColumnName(colIdx + 7)}: {c.name}
-                                                  </option>
-                                                );
-                                              })}
-                                            </select>
-
-                                            {((itemCol as any).multiplierSource || "manual") === "manual" && (
-                                              <input
-                                                type="number"
-                                                className="w-14 h-8 bg-white border-2 border-purple-400 rounded-md px-1.5 text-[12px] font-black text-purple-800 outline-none text-right shadow-sm focus:ring-2 ring-purple-600/30"
-                                                value={itemMultiplier}
+                                    <td key={`${col.name}-${idx}`} className="border-r px-2 py-1 bg-purple-50/10 relative group/cell align-middle text-[11px] min-w-[180px]">
+                                      <div className="flex flex-col h-full min-h-[45px] justify-between">
+                                        {isCalculated && (
+                                          <div className="absolute left-1 top-1 z-20 pointer-events-none group-hover/cell:pointer-events-auto focus-within:pointer-events-auto">
+                                            <div className="flex items-center gap-1 opacity-0 group-hover/cell:opacity-100 focus-within:opacity-100 transition-opacity bg-white/95 p-1 rounded-md shadow-md border border-purple-200">
+                                              <select
+                                                className="bg-white border border-purple-300 rounded text-[10px] font-semibold text-purple-700 outline-none h-6 px-1 cursor-pointer"
+                                                value={(itemCol as any).multiplierSource || "manual"}
                                                 disabled={isVersionSubmitted}
                                                 onChange={(e) => {
-                                                  const newVal = parseFloat(e.target.value) || 0;
-                                                  handleItemCalculation(boqItem.id, col.name, newVal, itemOp, (itemCol as any).multiplierSource || "manual");
+                                                  handleItemCalculation(boqItem.id, col.name, itemMultiplier, itemOp, e.target.value);
                                                 }}
-                                              />
-                                            )}
+                                              >
+                                                <option value="manual">Val</option>
+                                                <option value="Rate / Unit">E: Rate</option>
+                                                <option value="Unit">F: Unit</option>
+                                                <option value="Qty">G: Qty</option>
+                                                <option value="Total Value (₹)">H: Total</option>
+                                                <option value="Override Rate">I: O.Rate</option>
+                                                <option value="Override Total">J: O.Total</option>
+                                                {allCols.filter(c => c.name !== col.name).map((c) => {
+                                                  const ci = allCols.findIndex(cc => cc.name === c.name);
+                                                  return (
+                                                    <option key={c.name} value={c.name}>
+                                                      {getExcelColumnName(ci + 10)}: {c.name.substring(0, 8)}
+                                                    </option>
+                                                  );
+                                                })}
+                                              </select>
 
-                                            <select
-                                              className="bg-white border border-purple-300 rounded text-[9px] font-black text-purple-700 outline-none h-6 px-1 cursor-pointer"
-                                              value={itemOp}
-                                              disabled={isVersionSubmitted}
-                                              onChange={(e) => {
-                                                handleItemCalculation(boqItem.id, col.name, itemMultiplier, e.target.value, (itemCol as any).multiplierSource || "manual");
-                                              }}
-                                            >
-                                              <option value="%">%</option>
-                                              <option value="*">×</option>
-                                              <option value="/">÷</option>
-                                              <option value="+">+</option>
-                                            </select>
+                                              {((itemCol as any).multiplierSource || "manual") === "manual" && (
+                                                <input
+                                                  type="number"
+                                                  className="w-16 h-6 bg-white border border-purple-400 rounded-md px-1.5 text-[11px] font-semibold text-purple-800 outline-none text-right shadow-sm focus:ring-1 ring-purple-600/30"
+                                                  value={itemMultiplier}
+                                                  disabled={isVersionSubmitted}
+                                                  onChange={(e) => {
+                                                    const newVal = parseFloat(e.target.value) || 0;
+                                                    handleItemCalculation(boqItem.id, col.name, newVal, itemOp, (itemCol as any).multiplierSource || "manual");
+                                                  }}
+                                                />
+                                              )}
+
+                                              <select
+                                                className="bg-white border border-purple-300 rounded text-[10px] font-semibold text-purple-700 outline-none h-6 px-1 cursor-pointer"
+                                                value={itemOp}
+                                                disabled={isVersionSubmitted}
+                                                onChange={(e) => {
+                                                  handleItemCalculation(boqItem.id, col.name, itemMultiplier, e.target.value, (itemCol as any).multiplierSource || "manual");
+                                                }}
+                                              >
+                                                <option value="%">%</option>
+                                                <option value="*">×</option>
+                                                <option value="/">÷</option>
+                                                <option value="+">+</option>
+                                              </select>
+                                            </div>
                                           </div>
-                                          <span className="text-[8px] px-1.5 py-0.5 bg-purple-600 text-white rounded font-black uppercase tracking-wider truncate max-w-[80px] shadow-sm">
+                                        )}
+
+                                        <input
+                                          type="number"
+                                          disabled={isVersionSubmitted || isCalculated}
+                                          value={displayVal}
+                                          onChange={e => setCustomColumnValues(prev => ({
+                                            ...prev,
+                                            [boqItem.id]: {
+                                              ...prev[boqItem.id],
+                                              0: { ...(prev[boqItem.id]?.[0] || {}), [col.name]: e.target.value }
+                                            }
+                                          }))}
+                                          onBlur={() => saveItemLayout(boqItem.id)}
+                                          className={`w-full h-7 border-transparent rounded px-1 py-0.5 text-[11px] outline-none bg-transparent text-right font-bold transition-colors ${isCalculated ? "text-indigo-700" : "text-purple-800 focus:ring-1 ring-purple-400 hover:border-purple-200"}`}
+                                          placeholder="0.00"
+                                        />
+
+                                        <div className="flex justify-end mt-1">
+                                          <span className="text-[9px] px-1.5 py-0.5 bg-purple-600/10 text-purple-700 border border-purple-200/50 rounded-full font-bold uppercase tracking-wider truncate max-w-[120px] shadow-sm flex items-center gap-1">
                                             {(() => {
                                               const src = (itemCol as any).baseSource;
-                                              if (src === "Total Value (₹)") return "G: TOTAL";
+                                              if (src === "Total Value (₹)") return "H: TOTAL";
                                               if (src === "Rate / Unit") return "E: RATE";
-                                              if (src === "Qty") return "F: QTY";
+                                              if (src === "Qty") return "G: QTY";
+                                              if (src === "Unit") return "F: UNIT";
                                               const cIdx = allCols.findIndex(cc => cc.name === src);
-                                              if (cIdx >= 0) return `${getExcelColumnName(cIdx + 7)}: ${src}`;
-                                              return src;
+                                              if (cIdx >= 0) return `${getExcelColumnName(cIdx + 10)}: ${src}`;
+                                              return src || "MANUAL";
                                             })()}
                                           </span>
                                         </div>
-                                      )}
-                                      <input
-                                        type="number"
-                                        disabled={isVersionSubmitted || isCalculated}
-                                        value={displayVal}
-                                        onChange={e => setCustomColumnValues(prev => ({
-                                          ...prev,
-                                          [boqItem.id]: {
-                                            ...prev[boqItem.id],
-                                            0: { ...(prev[boqItem.id]?.[0] || {}), [col.name]: e.target.value }
-                                          }
-                                        }))}
-                                        onBlur={() => saveItemLayout(boqItem.id)}
-                                        className={`w-full h-12 border-transparent rounded px-2 py-1 text-[13px] outline-none bg-transparent text-right font-black ${isCalculated ? "text-indigo-700" : "text-purple-800 focus:ring-1 ring-purple-400 hover:border-gray-200"}`}
-                                        placeholder="0.00"
-                                      />
+                                      </div>
                                     </td>
                                   );
                                 }
@@ -2603,7 +2843,7 @@ export default function FinalizeBoq() {
                         <tr className="bg-gray-50 border-t-2 border-gray-300 font-bold group">
                           <td className="border-r bg-gray-100/50"></td>
                           <td className="border-r text-center text-xs text-gray-400 bg-gray-100/50">∑</td>
-                          <td className="border-r px-3 py-3 font-bold text-gray-800 relative">
+                          <td className="border-r px-2 py-1.5 font-bold text-gray-800 relative text-[11px]">
                             COLUMN TOTALS
                             <button
                               onClick={() => setShowColumnTotals(false)}
@@ -2613,16 +2853,19 @@ export default function FinalizeBoq() {
                               <Trash2 size={12} />
                             </button>
                           </td>
-                          <td className="border-r px-4 py-3 text-right font-black text-gray-600 bg-gray-50/50">
+                          <td className="border-r px-4 py-3 text-right font-semibold text-gray-600 bg-gray-50/50">
                             {/* Description total - empty */}
                           </td>
-                          <td className="border-r px-4 py-3 text-right font-black text-gray-600 bg-gray-50/50">
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-28">
                             ₹{calculatedColumnTotals.totalRateSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
-                          <td className="border-r px-4 py-3 text-right font-black text-gray-600 bg-gray-50/50">
+                          <td className="border-r px-4 py-3 text-right font-semibold text-gray-600 bg-gray-50/50">
+                            {/* Unit Total - empty */}
+                          </td>
+                          <td className="border-r px-4 py-3 text-right font-semibold text-gray-600 bg-gray-50/50">
                             {/* Qty Total intentionally left empty per user request */}
                           </td>
-                          <td className="border-r px-4 py-3 text-right font-black text-green-700 bg-green-50/30 group/total relative">
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-green-700 bg-green-50/30 group/total relative text-[11px] w-32">
                             {!hideSystemTotalFooter ? (
                               <>
                                 ₹{calculatedColumnTotals.totalValueSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -2643,10 +2886,16 @@ export default function FinalizeBoq() {
                               </button>
                             )}
                           </td>
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-32">
+                            {/* Override Rate total - empty */}
+                          </td>
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-green-800 bg-green-50/40 text-[11px] w-32">
+                            ₹{calculatedColumnTotals.overrideTotalSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
                           {allCols.map((col, idx) => (
                             <td
                               key={`total-${idx}`}
-                              className={`border-r px-4 py-3 text-right font-black group/total relative ${col.isTotal ? "text-green-900 bg-green-100/40" : "text-purple-700 bg-purple-50"}`}
+                              className={`border-r px-2 py-1.5 text-right font-semibold group/total relative text-[11px] ${col.isTotal ? "text-green-900 bg-green-100/40" : "text-purple-700 bg-purple-50"}`}
                             >
                               {!col.hideTotal ? (
                                 <>
@@ -2677,21 +2926,73 @@ export default function FinalizeBoq() {
               </Card>
             )}
 
-            {/* Grand total row across all products */}
             {boqItems.length > 0 && showColumnTotals && (
-              <div className="flex justify-end pt-2">
-                <div className="bg-gray-800 text-white rounded-lg px-6 py-3 flex items-center gap-8 shadow-lg group relative">
-                  <button
-                    onClick={() => setShowColumnTotals(false)}
-                    className="absolute -left-2 -top-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md hover:bg-red-600"
-                    title="Hide Grand Total"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                  <span className="text-sm font-semibold uppercase tracking-wider text-gray-300">Grand Total</span>
-                  <span className="text-xl font-bold text-green-400">
-                    ₹{calculatedColumnTotals.totalValueSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+              <div className="flex flex-col lg:flex-row gap-4 pt-4">
+                {/* Terms and Conditions Section */}
+                <div className="flex-1 min-w-[300px]">
+                  <Card className="bg-gray-50/50 border-gray-200">
+                    <CardHeader className="py-2 px-4 border-b">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-500">Global Terms & Conditions</span>
+                        <span className="text-[9px] text-gray-400 font-medium italic">(Applied to all projects)</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <textarea
+                        className="w-full min-h-[100px] p-4 bg-transparent outline-none text-[12px] text-gray-700 leading-relaxed scrollbar-hide resize-y"
+                        placeholder="Enter terms and conditions here..."
+                        value={termsAndConditions}
+                        onChange={(e) => handleUpdateTermsAndConditions(e.target.value)}
+                      />
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Grand Total Section */}
+                <div className="flex flex-col items-end">
+                  <div className="bg-gray-800 text-white rounded-lg px-4 py-3 flex items-center gap-8 shadow-lg group relative border border-gray-700 w-full lg:w-auto min-w-[500px]">
+                    <button
+                      onClick={() => setShowColumnTotals(false)}
+                      className="absolute -left-2 -top-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover/total:opacity-100 transition-opacity shadow-md hover:bg-red-600 z-10"
+                      title="Hide Grand Total"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+
+                    <div className="flex flex-col gap-1 flex-1">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400">Grand Total Source</span>
+                      <Select value={grandTotalColumn} onValueChange={handleSetGrandTotalColumn}>
+                        <SelectTrigger className="h-8 bg-gray-700/50 border-gray-600 text-white text-[11px] font-semibold w-full">
+                          <SelectValue placeholder="Select summary column" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-gray-800 text-white border-gray-700">
+                          <SelectItem value="Total Value (₹)">Standard Total</SelectItem>
+                          <SelectItem value="Override Total">Override Total</SelectItem>
+                          {allCols.map(col => (
+                            <SelectItem key={col.name} value={col.name}>{col.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="h-10 w-[1px] bg-gray-600/50 mx-2" />
+
+                    <div className="flex flex-col items-end min-w-[150px]">
+                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-green-400/80 mb-1">
+                        {grandTotalColumn === "Total Value (₹)" ? "Base Grand Total" :
+                          grandTotalColumn === "Override Total" ? "Override Grand Total" :
+                            `${grandTotalColumn} Total`}
+                      </span>
+                      <span className="text-2xl font-black text-green-400 font-mono tracking-tighter">
+                        ₹{(() => {
+                          if (grandTotalColumn === "Total Value (₹)") return calculatedColumnTotals.totalValueSum;
+                          if (grandTotalColumn === "Override Total") return calculatedColumnTotals.overrideTotalSum;
+                          const idx = allCols.findIndex(c => c.name === grandTotalColumn);
+                          return idx >= 0 ? calculatedColumnTotals.totals[idx] : 0;
+                        })().toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -2743,6 +3044,36 @@ export default function FinalizeBoq() {
             </Card>
           )
         }
+
+        {/* Save Template Dialog */}
+        <Dialog open={isSaveTemplateDialogOpen} onOpenChange={setIsSaveTemplateDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Save BOQ Template</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Template Name</Label>
+                <Input
+                  placeholder="e.g., Standard Office Interior"
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                />
+                <p className="text-xs text-gray-500">
+                  This will save the current column names and formulas.
+                </p>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsSaveTemplateDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveAsTemplate}>
+                Save Template
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div >
     </Layout >
   );

@@ -25,6 +25,7 @@ import {
   AlertCircle,
   Users,
   Tags,
+  FolderKanban,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -253,6 +254,22 @@ export function Sidebar() {
               >
                 <LayoutDashboard className="h-4 w-4" />
                 Dashboard
+              </span>
+            </Link>
+          )}
+
+          {isAdminOrSoftware && (
+            <Link href="/project-dashboard">
+              <span
+                className={cn(
+                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
+                  location === "/project-dashboard"
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent",
+                )}
+                onClick={() => setIsOpen(false)}
+              >
+                <FolderKanban className="h-4 w-4" /> Project Dashboard
               </span>
             </Link>
           )}
