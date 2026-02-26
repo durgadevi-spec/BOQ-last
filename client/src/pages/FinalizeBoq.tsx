@@ -231,7 +231,7 @@ const DraggableHeaderCol = ({
                 <option value="Override Total">J: O.Total</option>
                 {allCols.filter(c => c.name !== col.name).map((c) => {
                   const ci = allCols.findIndex(cc => cc.name === c.name);
-                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 10)}: {c.name.substring(0, 8)}</option>;
+                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 11)}: {c.name.substring(0, 8)}</option>;
                 })}
               </select>
               <select
@@ -257,7 +257,7 @@ const DraggableHeaderCol = ({
                 <option value="Override Total">J: O.Total</option>
                 {allCols.filter(c => c.name !== col.name).map((c) => {
                   const ci = allCols.findIndex(cc => cc.name === c.name);
-                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 10)}: {c.name.substring(0, 8)}</option>;
+                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 11)}: {c.name.substring(0, 8)}</option>;
                 })}
               </select>
               {(!globalColSettings[col.name]?.multiplierSource || globalColSettings[col.name]?.multiplierSource === "manual") ? (
@@ -2762,7 +2762,7 @@ export default function FinalizeBoq() {
                                                   const ci = allCols.findIndex(cc => cc.name === c.name);
                                                   return (
                                                     <option key={c.name} value={c.name}>
-                                                      {getExcelColumnName(ci + 10)}: {c.name.substring(0, 8)}
+                                                      {getExcelColumnName(ci + 11)}: {c.name.substring(0, 8)}
                                                     </option>
                                                   );
                                                 })}
@@ -2823,7 +2823,7 @@ export default function FinalizeBoq() {
                                               if (src === "Qty") return "G: QTY";
                                               if (src === "Unit") return "F: UNIT";
                                               const cIdx = allCols.findIndex(cc => cc.name === src);
-                                              if (cIdx >= 0) return `${getExcelColumnName(cIdx + 10)}: ${src}`;
+                                              if (cIdx >= 0) return `${getExcelColumnName(cIdx + 11)}: ${src}`;
                                               return src || "MANUAL";
                                             })()}
                                           </span>
@@ -2855,6 +2855,9 @@ export default function FinalizeBoq() {
                           </td>
                           <td className="border-r px-4 py-3 text-right font-semibold text-gray-600 bg-gray-50/50">
                             {/* Description total - empty */}
+                          </td>
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-28">
+                            {/* HSN/SAC Total - empty */}
                           </td>
                           <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-28">
                             ₹{calculatedColumnTotals.totalRateSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
