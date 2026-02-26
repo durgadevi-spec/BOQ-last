@@ -74,6 +74,8 @@ type Product = {
   subcategory_name?: string;
   tax_code_type?: string;
   tax_code_value?: string;
+  hsn_code?: string;
+  sac_code?: string;
 };
 
 type Step11Item = {
@@ -286,11 +288,16 @@ export default function CreateBom() {
               for (const item of items) {
                 let td = item.table_data || {};
                 if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
-                if (td.product_id && !td.hsn_sac_code) {
+                if (td.product_id && (!td.hsn_code && !td.sac_code)) {
                   const prod = productsById[td.product_id];
-                  if (prod && prod.tax_code_value) {
-                    td.hsn_sac_code = prod.tax_code_value;
-                    td.hsn_sac_type = prod.tax_code_type || null;
+                  if (prod) {
+                    if (prod.hsn_code) td.hsn_code = prod.hsn_code;
+                    if (prod.sac_code) td.sac_code = prod.sac_code;
+                    // Keep legacy for safety
+                    if (prod.tax_code_value) {
+                      td.hsn_sac_code = prod.tax_code_value;
+                      td.hsn_sac_type = prod.tax_code_type || null;
+                    }
                     item.table_data = td;
                   }
                 }
@@ -862,6 +869,8 @@ export default function CreateBom() {
         subcategory: selectedProduct.subcategory,
         hsn_sac_type: selectedProduct.tax_code_type || null,
         hsn_sac_code: selectedProduct.tax_code_value || null,
+        hsn_code: selectedProduct.hsn_code || null,
+        sac_code: selectedProduct.sac_code || null,
 
         // NEW BOQ ENGINE FIELDS
         targetRequiredQty: targetRequiredQty,
@@ -1810,44 +1819,62 @@ export default function CreateBom() {
                                 </Button>
                               </div>
                               <div className="flex flex-col gap-2">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <Input
-                                  placeholder="Enter product description..."
-                                  className="h-8 text-xs w-full max-w-md mt-1"
-                                  defaultValue={tableData.finalize_description || ""}
-                                  disabled={isVersionSubmitted}
-                                  onBlur={async (e) => {
-                                    const newDesc = e.target.value;
-                                    if (newDesc === (tableData.finalize_description || "")) return;
-                                    
-                                    try {
-                                      const updatedTd = { ...tableData, finalize_description: newDesc };
-                                      const resp = await apiFetch(`/api/boq-items/${boqItem.id}`, {
-                                        method: "PUT",
-                                        headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ table_data: updatedTd }),
-                                      });
-                                      if (resp.ok) {
-                                        toast({ title: "Saved", description: "Product description updated" });
-                                        // Update local state to reflect the change without full reload if possible
-                                        setBoqItems(prev => prev.map(item => 
-                                          item.id === boqItem.id ? { ...item, table_data: updatedTd } : item
-                                        ));
-                                      }
-                                    } catch (err) {
-                                      console.error("Failed to save description", err);
-                                      toast({ title: "Error", description: "Failed to save description", variant: "destructive" });
-                                    }
-                                  }}
-                                />
-                                <div className="flex items-center gap-1 mt-1">
-                                  <span className="text-[10px] font-bold text-gray-500 uppercase">HSN/SAC:</span>
-                                  <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded border border-gray-200 min-w-[80px]">
-                                    {tableData.hsn_sac_code || "\u2014"}
-                                  </span>
-                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Input
+                                    placeholder="Enter product description..."
+                                    className="h-8 text-xs w-full max-w-md mt-1"
+                                    defaultValue={tableData.finalize_description || ""}
+                                    disabled={isVersionSubmitted}
+                                    onBlur={async (e) => {
+                                      const newDesc = e.target.value;
+                                      if (newDesc === (tableData.finalize_description || "")) return;
 
-                              </div>
+                                      try {
+                                        const updatedTd = { ...tableData, finalize_description: newDesc };
+                                        const resp = await apiFetch(`/api/boq-items/${boqItem.id}`, {
+                                          method: "PUT",
+                                          headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ table_data: updatedTd }),
+                                        });
+                                        if (resp.ok) {
+                                          toast({ title: "Saved", description: "Product description updated" });
+                                          // Update local state to reflect the change without full reload if possible
+                                          setBoqItems(prev => prev.map(item =>
+                                            item.id === boqItem.id ? { ...item, table_data: updatedTd } : item
+                                          ));
+                                        }
+                                      } catch (err) {
+                                        console.error("Failed to save description", err);
+                                        toast({ title: "Error", description: "Failed to save description", variant: "destructive" });
+                                      }
+                                    }}
+                                  />
+                                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                                    {(tableData.hsn_code || tableData.hsn_sac_type === 'hsn') && (
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase">HSN:</span>
+                                        <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded border border-gray-200 min-w-[60px]">
+                                          {tableData.hsn_code || (tableData.hsn_sac_type === 'hsn' ? tableData.hsn_sac_code : "") || "\u2014"}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {(tableData.sac_code || tableData.hsn_sac_type === 'sac') && (
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase">SAC:</span>
+                                        <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-0.5 rounded border border-gray-200 min-w-[60px]">
+                                          {tableData.sac_code || (tableData.hsn_sac_type === 'sac' ? tableData.hsn_sac_code : "") || "\u2014"}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {(!tableData.hsn_code && !tableData.sac_code && !tableData.hsn_sac_code) && (
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-[10px] font-bold text-gray-500 uppercase">HSN/SAC:</span>
+                                        <span className="text-xs font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded border border-gray-200 min-w-[80px]">\u2014</span>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                </div>
                                 {isEngineBased && (
                                   <div className="flex items-center gap-2 text-[11px] text-gray-600 font-medium">
                                     Project Target: <span className="text-blue-600 font-bold">{tableData.targetRequiredQty} {tableData.configBasis?.requiredUnitType}</span>

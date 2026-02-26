@@ -89,15 +89,31 @@ export async function seedMaterialCategories(): Promise<void> {
         subcategory TEXT NOT NULL,
         tax_code_type VARCHAR(10) DEFAULT NULL CHECK (tax_code_type IN ('hsn', 'sac')),
         tax_code_value VARCHAR(255) DEFAULT NULL,
+        hsn_code VARCHAR(255) DEFAULT NULL,
+        sac_code VARCHAR(255) DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         created_by VARCHAR(255)
       )
     `);
 
     // Add subcategory column if it doesn't exist (for existing tables)
-    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS subcategory TEXT NOT NULL`);
-    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS tax_code_type VARCHAR(10) DEFAULT NULL CHECK (tax_code_type IN ('hsn', 'sac'))`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS subcategory TEXT`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS tax_code_type VARCHAR(10) DEFAULT NULL`);
     await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS tax_code_value VARCHAR(255) DEFAULT NULL`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS hsn_code VARCHAR(255) DEFAULT NULL`);
+    await query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS sac_code VARCHAR(255) DEFAULT NULL`);
+
+    // Migration: Populate hsn_code and sac_code from tax_code_type/value if they are null
+    await query(`
+      UPDATE products 
+      SET hsn_code = tax_code_value 
+      WHERE hsn_code IS NULL AND tax_code_type = 'hsn' AND tax_code_value IS NOT NULL
+    `);
+    await query(`
+      UPDATE products 
+      SET sac_code = tax_code_value 
+      WHERE sac_code IS NULL AND tax_code_type = 'sac' AND tax_code_value IS NOT NULL
+    `);
 
     console.log('[seed-categories] ✓ products table ready');
 

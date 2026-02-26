@@ -2646,8 +2646,8 @@ export async function registerRoutes(
     requireRole("admin", "software_team", "purchase_team", "pre_sales"),
     async (req: Request, res: Response) => {
       try {
-        const { name, subcategory, taxCodeType, taxCodeValue } = req.body;
-        console.log('/api/products POST body ->', { name, subcategory, taxCodeType, taxCodeValue });
+        const { name, subcategory, taxCodeType, taxCodeValue, hsn_code, sac_code } = req.body;
+        console.log('/api/products POST body ->', { name, subcategory, taxCodeType, taxCodeValue, hsn_code, sac_code });
 
         if (!name) {
           res.status(400).json({ message: "Product name is required" });
@@ -2661,11 +2661,11 @@ export async function registerRoutes(
 
         const result = await query(
           `
-        INSERT INTO products (name, subcategory, tax_code_type, tax_code_value, created_by)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO products (name, subcategory, tax_code_type, tax_code_value, hsn_code, sac_code, created_by)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `,
-          [name, subcategory || null, taxCodeType || null, taxCodeValue || null, req.user?.username || "unknown"],
+          [name, subcategory || null, taxCodeType || null, taxCodeValue || null, hsn_code || null, sac_code || null, req.user?.username || "unknown"],
         );
         console.log('/api/products POST inserted ->', result.rows[0]);
 
@@ -2711,8 +2711,13 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
-        const { name, subcategory, taxCodeType, taxCodeValue } = req.body;
-        console.log(`/api/products/${id} PUT body ->`, { name, subcategory, taxCodeType, taxCodeValue });
+        const { name, subcategory, taxCodeType, taxCodeValue, hsn_code, sac_code, hsnCode, sacCode } = req.body;
+
+        // Support both hsn_code (db style) and hsnCode (frontend style)
+        const finalHsnCode = hsn_code || hsnCode;
+        const finalSacCode = sac_code || sacCode;
+
+        console.log(`/api/products/${id} PUT body ->`, { name, subcategory, hsn_code: finalHsnCode, sac_code: finalSacCode });
 
         if (!name) {
           res.status(400).json({ message: "Product name is required" });
@@ -2727,11 +2732,11 @@ export async function registerRoutes(
         const result = await query(
           `
         UPDATE products 
-        SET name = $1, subcategory = $2, tax_code_type = $3, tax_code_value = $4
-        WHERE id = $5
+        SET name = $1, subcategory = $2, tax_code_type = $3, tax_code_value = $4, hsn_code = $5, sac_code = $6
+        WHERE id = $7
         RETURNING *
       `,
-          [name, subcategory, taxCodeType || null, taxCodeValue || null, id],
+          [name, subcategory, taxCodeType || null, taxCodeValue || null, finalHsnCode || null, finalSacCode || null, id],
         );
         console.log(`/api/products/${id} PUT updated ->`, result.rows[0]);
 

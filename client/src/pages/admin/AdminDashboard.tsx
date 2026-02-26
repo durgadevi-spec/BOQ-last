@@ -165,6 +165,8 @@ export default function AdminDashboard() {
     ...p,
     taxCodeType: p.taxCodeType ?? p.tax_code_type ?? null,
     taxCodeValue: p.taxCodeValue ?? p.tax_code_value ?? "",
+    hsnCode: p.hsn_code ?? p.hsnCode ?? "",
+    sacCode: p.sac_code ?? p.sacCode ?? "",
   });
 
   // NEW CATEGORY/SUBCATEGORY INPUT
@@ -2237,57 +2239,43 @@ export default function AdminDashboard() {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label>Tax Code Type</Label>
-                        <div className="flex gap-4 mt-2">
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              id="edit-hsn"
-                              name="editProductTaxCodeType"
-                              value="hsn"
-                              checked={editingProduct.taxCodeType === 'hsn'}
-                              onChange={(e) => setEditingProduct((prev: any) => ({ ...prev, taxCodeType: e.target.value as 'hsn' | 'sac' }))}
-                              className="w-4 h-4"
+                        <Label>Tax Codes</Label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label>HSN Code</Label>
+                            <Input
+                              value={editingProduct.hsnCode || ''}
+                              onChange={(e) => setEditingProduct((prev: any) => ({ ...prev, hsnCode: e.target.value }))}
+                              placeholder="Enter HSN code"
                             />
-                            <Label htmlFor="edit-hsn" className="cursor-pointer mb-0">HSN Code</Label>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="radio"
-                              id="edit-sac"
-                              name="editProductTaxCodeType"
-                              value="sac"
-                              checked={editingProduct.taxCodeType === 'sac'}
-                              onChange={(e) => setEditingProduct((prev: any) => ({ ...prev, taxCodeType: e.target.value as 'hsn' | 'sac' }))}
-                              className="w-4 h-4"
+                          <div className="space-y-2">
+                            <Label>SAC Code</Label>
+                            <Input
+                              value={editingProduct.sacCode || ''}
+                              onChange={(e) => setEditingProduct((prev: any) => ({ ...prev, sacCode: e.target.value }))}
+                              placeholder="Enter SAC code"
                             />
-                            <Label htmlFor="edit-sac" className="cursor-pointer mb-0">SAC Code</Label>
                           </div>
                         </div>
-                      </div>
-                      {editingProduct.taxCodeType && (
-                        <div className="space-y-2">
-                          <Label>{editingProduct.taxCodeType === 'hsn' ? 'HSN' : 'SAC'} Code</Label>
-                          <Input value={editingProduct.taxCodeValue || ''} onChange={(e) => setEditingProduct((prev: any) => ({ ...prev, taxCodeValue: e.target.value }))} placeholder={`Enter ${editingProduct.taxCodeType === 'hsn' ? 'HSN' : 'SAC'} code`} />
+                        <div className="flex gap-2 justify-end">
+                          <Button variant="outline" onClick={() => setEditingProduct(null)}>
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={() => {
+                              if (editingProduct.name.trim() && editingProduct.subcategory) {
+                                handleUpdateProduct();
+                                setEditingProduct(null);
+                              } else {
+                                toast({ title: 'Error', description: 'Please fill in all fields', variant: 'destructive' });
+                              }
+                            }}
+                            className="bg-blue-600 hover:bg-blue-700"
+                          >
+                            Save Changes
+                          </Button>
                         </div>
-                      )}
-                      <div className="flex gap-2 justify-end">
-                        <Button variant="outline" onClick={() => setEditingProduct(null)}>
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            if (editingProduct.name.trim() && editingProduct.subcategory) {
-                              handleUpdateProduct();
-                              setEditingProduct(null);
-                            } else {
-                              toast({ title: 'Error', description: 'Please fill in all fields', variant: 'destructive' });
-                            }
-                          }}
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          Save Changes
-                        </Button>
                       </div>
                     </div>
                   </DialogContent>

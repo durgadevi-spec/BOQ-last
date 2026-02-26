@@ -29,7 +29,7 @@ import { computeBoq, UnitType } from "@/lib/boqCalc";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Trash2, Copy, GripVertical, GripHorizontal, Eye, EyeOff } from "lucide-react";
+import { Trash2, Copy, GripVertical, GripHorizontal, Eye, EyeOff, Edit2 } from "lucide-react";
 
 /** Helper to generate Excel-style column names (A, B, C... Z, AA, AB...) */
 const getExcelColumnName = (n: number) => {
@@ -81,6 +81,8 @@ type Product = {
   subcategory_name?: string;
   tax_code_type?: string;
   tax_code_value?: string;
+  hsn_code?: string;
+  sac_code?: string;
 };
 
 type BOQTemplate = {
@@ -139,9 +141,61 @@ const DraggableHeaderCol = ({
   saveItemLayout,
   toast,
   setCustomColumns,
-  setCustomColumnValues
-}: DraggableHeaderColProps) => {
+  setCustomColumnValues,
+  setGlobalColSettings
+}: DraggableHeaderColProps & { setGlobalColSettings: any }) => {
   const controls = useDragControls();
+
+  const handleRenameColumn = async () => {
+    const oldName = col.name;
+    const newName = window.prompt(`Enter new name for column "${oldName}":`, oldName);
+    if (!newName || newName === oldName) return;
+
+    // Check for duplicates
+    if (allCols.some(c => c.name === newName)) {
+      toast({ title: "Error", description: "Column name already exists", variant: "destructive" });
+      return;
+    }
+
+    const updates = boqItems.map(item => {
+      const itemCols = [...(customColumns[item.id] || [])];
+      const colIdx = itemCols.findIndex(c => c.name === oldName);
+      if (colIdx === -1) return Promise.resolve();
+
+      // Update column definition
+      itemCols[colIdx] = { ...itemCols[colIdx], name: newName };
+
+      // Update values
+      const itemValues = { ...(customColumnValues[item.id] || {}) };
+      Object.keys(itemValues).forEach(r => {
+        const ri = parseInt(r);
+        const rowVals = { ...(itemValues[ri] || {}) };
+        if (rowVals[oldName] !== undefined) {
+          rowVals[newName] = rowVals[oldName];
+          delete rowVals[oldName];
+        }
+        itemValues[ri] = rowVals;
+      });
+
+      setCustomColumns((prev: any) => ({ ...prev, [item.id]: itemCols }));
+      setCustomColumnValues((prev: any) => ({ ...prev, [item.id]: itemValues }));
+
+      // Also update global settings if any
+      if (globalColSettings[oldName]) {
+        setGlobalColSettings((prev: any) => {
+          const next = { ...prev };
+          next[newName] = next[oldName];
+          delete next[oldName];
+          return next;
+        });
+      }
+
+      return saveItemLayout(item.id, itemCols, itemValues);
+    });
+
+    await Promise.all(updates);
+    toast({ title: "Column Renamed", description: `"${oldName}" is now "${newName}"` });
+  };
 
   return (
     <Reorder.Item
@@ -150,19 +204,19 @@ const DraggableHeaderCol = ({
       as="th"
       dragListener={false}
       dragControls={controls}
-      className={`border-r px-2 py-1 text-left min-w-[110px] sm:min-w-[130px] group relative ${col.isTotal ? "text-green-900 bg-green-100/40" : "text-purple-900 bg-purple-100/40"}`}
+      className={`border-r border-sky-300 px-2 py-2 text-left min-w-[130px] group relative ${col.isTotal ? "text-green-900 bg-emerald-100" : "text-slate-900 bg-sky-100"}`}
     >
-      <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between gap-1 overflow-hidden">
           <div className="flex items-center gap-1.5 overflow-hidden">
             {!isVersionSubmitted && (
               <GripHorizontal
-                size={10}
-                className="text-gray-400 cursor-grab active:cursor-grabbing flex-shrink-0"
+                size={12}
+                className="text-slate-400 cursor-grab active:cursor-grabbing flex-shrink-0"
                 onPointerDown={(e) => controls.start(e)}
               />
             )}
-            <span className="truncate font-bold text-[9px] uppercase tracking-tighter text-gray-700">{col.name}</span>
+            <span className="truncate font-black text-[11px] uppercase tracking-normal text-slate-800">{col.name}</span>
           </div>
           {!isVersionSubmitted && (
             <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -188,6 +242,13 @@ const DraggableHeaderCol = ({
                 }}
                 className="text-gray-400 hover:text-blue-500"
               ><Copy size={10} /></button>
+              <button
+                onClick={handleRenameColumn}
+                className="text-gray-400 hover:text-green-500"
+                title="Rename Column"
+              >
+                <Edit2 size={10} />
+              </button>
               <button onClick={() => handleHideColumn(col.name, true)} className="text-gray-400 hover:text-orange-500"><EyeOff size={10} /></button>
               <button
                 onClick={async () => {
@@ -223,15 +284,15 @@ const DraggableHeaderCol = ({
                 onChange={(e) => handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, e.target.value, globalColSettings[col.name]?.operator || "%", globalColSettings[col.name]?.multiplierSource || "manual")}
               >
                 <option value="manual">Fixed</option>
-                <option value="Rate / Unit">E: Rate</option>
-                <option value="Unit">F: Unit</option>
-                <option value="Qty">G: Qty</option>
-                <option value="Total Value (₹)">H: Total</option>
-                <option value="Override Rate">I: O.Rate</option>
-                <option value="Override Total">J: O.Total</option>
+                <option value="Rate / Unit">G: Rate</option>
+                <option value="Unit">H: Unit</option>
+                <option value="Qty">I: Qty</option>
+                <option value="Total Value (₹)">J: Total</option>
+                <option value="Override Rate">K: O.Rate</option>
+                <option value="Override Total">L: O.Total</option>
                 {allCols.filter(c => c.name !== col.name).map((c) => {
                   const ci = allCols.findIndex(cc => cc.name === c.name);
-                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 11)}: {c.name.substring(0, 8)}</option>;
+                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 12)}: {c.name.substring(0, 8)}</option>;
                 })}
               </select>
               <select
@@ -249,15 +310,15 @@ const DraggableHeaderCol = ({
                 onChange={(e) => handleGlobalCalculation(col.name, globalColSettings[col.name]?.baseValue || 0, globalColSettings[col.name]?.percentageValue || 0, globalColSettings[col.name]?.baseSource || "manual", globalColSettings[col.name]?.operator || "%", e.target.value)}
               >
                 <option value="manual">Val</option>
-                <option value="Rate / Unit">E: Rate</option>
-                <option value="Unit">F: Unit</option>
-                <option value="Qty">G: Qty</option>
-                <option value="Total Value (₹)">H: Total</option>
-                <option value="Override Rate">I: O.Rate</option>
-                <option value="Override Total">J: O.Total</option>
+                <option value="Rate / Unit">G: Rate</option>
+                <option value="Unit">H: Unit</option>
+                <option value="Qty">I: Qty</option>
+                <option value="Total Value (₹)">J: Total</option>
+                <option value="Override Rate">K: O.Rate</option>
+                <option value="Override Total">L: O.Total</option>
                 {allCols.filter(c => c.name !== col.name).map((c) => {
                   const ci = allCols.findIndex(cc => cc.name === c.name);
-                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 11)}: {c.name.substring(0, 8)}</option>;
+                  return <option key={c.name} value={c.name}>{getExcelColumnName(ci + 12)}: {c.name.substring(0, 8)}</option>;
                 })}
               </select>
               {(!globalColSettings[col.name]?.multiplierSource || globalColSettings[col.name]?.multiplierSource === "manual") ? (
@@ -298,6 +359,7 @@ export default function FinalizeBoq() {
   const [loading, setLoading] = useState(true);
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
+  const dragControls = useDragControls();
   const [templates, setTemplates] = useState<BOQTemplate[]>([]);
   const [isSaveTemplateDialogOpen, setIsSaveTemplateDialogOpen] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
@@ -630,19 +692,26 @@ export default function FinalizeBoq() {
     loadProjects();
   }, []);
 
+  const loadTemplates = React.useCallback(async () => {
+    try {
+      const resp = await apiFetch("/api/boq-templates");
+      if (resp.ok) {
+        const data = await resp.json();
+        setTemplates(data.templates || []);
+      }
+    } catch (e) {
+      console.error("Failed to load templates:", e);
+    }
+  }, []);
+
   // Load templates & global settings on mount
   useEffect(() => {
     const loadInitialData = async () => {
       try {
-        const [templatesResp, settingsResp] = await Promise.all([
-          apiFetch("/api/boq-templates"),
+        const [, settingsResp] = await Promise.all([
+          loadTemplates(),
           apiFetch("/api/global-settings")
         ]);
-
-        if (templatesResp.ok) {
-          const data = await templatesResp.json();
-          setTemplates(data.templates || []);
-        }
 
         if (settingsResp.ok) {
           const settings = await settingsResp.json();
@@ -655,7 +724,7 @@ export default function FinalizeBoq() {
       }
     };
     loadInitialData();
-  }, []);
+  }, [loadTemplates]);
 
   // Load versions when project is selected
   useEffect(() => {
@@ -822,11 +891,16 @@ export default function FinalizeBoq() {
                 for (const item of items) {
                   let td = item.table_data || {};
                   if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
-                  if (td.product_id && !td.hsn_sac_code) {
+                  if (td.product_id && (!td.hsn_code && !td.sac_code)) {
                     const prod = productsById[td.product_id];
-                    if (prod && prod.tax_code_value) {
-                      td.hsn_sac_code = prod.tax_code_value;
-                      td.hsn_sac_type = prod.tax_code_type || null;
+                    if (prod) {
+                      if (prod.hsn_code) td.hsn_code = prod.hsn_code;
+                      if (prod.sac_code) td.sac_code = prod.sac_code;
+                      // Keep legacy for safety
+                      if (prod.tax_code_value) {
+                        td.hsn_sac_code = prod.tax_code_value;
+                        td.hsn_sac_type = prod.tax_code_type || null;
+                      }
                       item.table_data = td;
                     }
                   }
@@ -1215,7 +1289,7 @@ export default function FinalizeBoq() {
     ));
   };
 
-  const handleItemCalculation = async (boqItemId: string, colName: string, multiplier: number, operator: string = "%", multiplierSource: string = "manual") => {
+  const handleItemCalculation = async (boqItemId: string, colName: string, multiplier: number, operator: string = "%", multiplierSource: string = "manual", baseSourceOverride?: string) => {
     const item = boqItems.find(i => i.id === boqItemId);
     if (!item) return;
 
@@ -1223,8 +1297,8 @@ export default function FinalizeBoq() {
     const itemCol = itemCols.find(c => c.name === colName);
     if (!itemCol) return;
 
-    let rowBase = itemCol.baseValue || 0;
-    const baseSource = itemCol.baseSource || "manual";
+    const baseSource = baseSourceOverride || itemCol.baseSource || "manual";
+    let rowBase = 0;
 
     // Ensure system values available
     let itemTotal = 0;
@@ -1303,7 +1377,7 @@ export default function FinalizeBoq() {
     else if (operator === "+") calculated = rowBase + rowMultiplierVal;
 
     const nextCols = itemCols.map(c =>
-      c.name === colName ? { ...c, percentageValue: multiplier, operator, multiplierSource, isPercentage: (baseSource !== "manual") } : c
+      c.name === colName ? { ...c, percentageValue: multiplier, operator, multiplierSource, baseSource, isPercentage: (baseSource !== "manual") } : c
     );
 
     const itemVals = { ...(customColumnValues[item.id] || {}) };
@@ -1582,6 +1656,8 @@ export default function FinalizeBoq() {
       "S.No",
       "Product / Material",
       "Description / Location",
+      "HSN",
+      "SAC",
       "Rate / Unit",
       "Unit",
       "Qty",
@@ -1652,7 +1728,7 @@ export default function FinalizeBoq() {
         totalVal = rateSqft * displayQty;
 
         const manualDesc = productDescriptions[boqItem.id] ?? (
-          tableData.subcategory || step11Items[0]?.description || category || ""
+          tableData.subcategory || currentStep11Items[0]?.description || category || ""
         );
 
         const rowValues: { [colName: string]: any } = {};
@@ -1665,7 +1741,8 @@ export default function FinalizeBoq() {
           "S.No",
           "Product / Material",
           "Description / Location",
-          "HSN/SAC",
+          "HSN",
+          "SAC",
           "Rate / Unit",
           "Unit",
           "Qty",
@@ -1679,7 +1756,8 @@ export default function FinalizeBoq() {
           if (colName === "S.No") rowValues[colName] = boqIdx + 1;
           else if (colName === "Product / Material") rowValues[colName] = productName;
           else if (colName === "Description / Location") rowValues[colName] = manualDesc;
-          else if (colName === "HSN/SAC") rowValues[colName] = tableData.hsn_sac_code || "—";
+          else if (colName === "HSN") rowValues[colName] = tableData.hsn_code || (tableData.hsn_sac_type === 'hsn' ? tableData.hsn_sac_code : "") || "—";
+          else if (colName === "SAC") rowValues[colName] = tableData.sac_code || (tableData.hsn_sac_type === 'sac' ? tableData.hsn_sac_code : "") || "—";
           else if (colName === "Rate / Unit") rowValues[colName] = Number(rateSqft.toFixed(2));
           else if (colName === "Unit") rowValues[colName] = currentStep11Items[0]?.unit || tableData.unit || "";
           else if (colName === "Qty") rowValues[colName] = Number(displayQty.toFixed(2));
@@ -1714,6 +1792,8 @@ export default function FinalizeBoq() {
                 if (baseSource === "Total Value (₹)") baseVal = totalVal;
                 else if (baseSource === "Rate / Unit") baseVal = rateSqft;
                 else if (baseSource === "Qty") baseVal = displayQty;
+                else if (baseSource === "Override Rate") baseVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+                else if (baseSource === "Override Total") baseVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
                 else if (rowCalculatedValues[baseSource] !== undefined) baseVal = rowCalculatedValues[baseSource];
                 else baseVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[baseSource] || "0") || 0;
 
@@ -1722,6 +1802,8 @@ export default function FinalizeBoq() {
                 else if (multiplierSource === "Total Value (₹)") multiplierVal = totalVal;
                 else if (multiplierSource === "Rate / Unit") multiplierVal = rateSqft;
                 else if (multiplierSource === "Qty") multiplierVal = displayQty;
+                else if (multiplierSource === "Override Rate") multiplierVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+                else if (multiplierSource === "Override Total") multiplierVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
                 else if (rowCalculatedValues[multiplierSource] !== undefined) multiplierVal = rowCalculatedValues[multiplierSource];
                 else multiplierVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0") || 0;
 
@@ -1753,16 +1835,17 @@ export default function FinalizeBoq() {
       selectedExportCols.forEach((colName, idx) => {
         if (colName === "Product / Material") footerRow[idx] = "GRAND TOTAL";
         else if (colName === "Total Value (₹)") {
-          footerRow[idx] = Number(calculatedColumnTotals.totalValueSum.toFixed(2));
+          footerRow[idx] = hideSystemTotalFooter ? "" : Number(calculatedColumnTotals.totalValueSum.toFixed(2));
         } else if (colName === "Rate / Unit") {
           footerRow[idx] = Number(calculatedColumnTotals.totalRateSum.toFixed(2));
-        } else if (colName === "Qty") {
-          footerRow[idx] = "";
-        } else if (colName === "Description / Location") {
+        } else if (colName === "Override Total") {
+          footerRow[idx] = Number(calculatedColumnTotals.overrideTotalSum.toFixed(2));
+        } else if (colName === "Qty" || colName === "Description / Location" || colName === "HSN" || colName === "SAC" || colName === "Unit" || colName === "Override Rate") {
           footerRow[idx] = "";
         } else if (allCols.some(c => c.name === colName)) {
           const colIdx = allCols.findIndex(c => c.name === colName);
-          footerRow[idx] = Number(calculatedColumnTotals.totals[colIdx].toFixed(2));
+          const col = allCols[colIdx];
+          footerRow[idx] = col.hideTotal ? "" : Number(calculatedColumnTotals.totals[colIdx].toFixed(2));
         }
       });
       sheetData.push(footerRow);
@@ -1803,7 +1886,8 @@ export default function FinalizeBoq() {
         "S.No",
         "Product / Material",
         "Description",
-        "HSN/SAC",
+        "HSN",
+        "SAC",
         "Rate (₹)",
         "Unit",
         "Qty",
@@ -1854,7 +1938,7 @@ export default function FinalizeBoq() {
         totalVal = rateSqft * displayQty;
 
         const manualDesc = productDescriptions[boqItem.id] ?? (
-          tableData.subcategory || step11Items[0]?.description || category || ""
+          tableData.subcategory || currentStep11Items[0]?.description || category || ""
         );
 
         grandTotalValue += totalVal;
@@ -1863,15 +1947,52 @@ export default function FinalizeBoq() {
         const customVals: string[] = [];
         let runningTotal = totalVal;
         let accumulator = 0;
+        const rowCalculatedValues: { [colName: string]: number } = {};
+
         allCols.forEach(col => {
+          const itemCol = (customColumns[boqItem.id] || []).find(c => c.name === col.name) || col;
           if (col.isTotal) {
             runningTotal += accumulator;
             accumulator = 0;
+            rowCalculatedValues[col.name] = runningTotal;
             customVals.push(runningTotal.toFixed(2));
           } else {
-            const val = customColumnValues[boqItem.id]?.[0]?.[col.name] || "0";
-            accumulator += parseFloat(val) || 0;
-            customVals.push(val);
+            let val = 0;
+            const baseSource = (itemCol as any).baseSource;
+            const operator = (itemCol as any).operator || "%";
+            const multiplierSource = (itemCol as any).multiplierSource || "manual";
+            const manualMultiplier = (itemCol as any).percentageValue || 0;
+
+            if (baseSource && baseSource !== "manual") {
+              let bVal = 0;
+              if (baseSource === "Total Value (₹)") bVal = totalVal;
+              else if (baseSource === "Rate / Unit") bVal = rateSqft;
+              else if (baseSource === "Qty") bVal = displayQty;
+              else if (baseSource === "Override Rate") bVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+              else if (baseSource === "Override Total") bVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
+              else if (rowCalculatedValues[baseSource] !== undefined) bVal = rowCalculatedValues[baseSource];
+              else bVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[baseSource] || "0") || 0;
+
+              let mVal = 0;
+              if (multiplierSource === "manual") mVal = manualMultiplier;
+              else if (multiplierSource === "Total Value (₹)") mVal = totalVal;
+              else if (multiplierSource === "Rate / Unit") mVal = rateSqft;
+              else if (multiplierSource === "Qty") mVal = displayQty;
+              else if (multiplierSource === "Override Rate") mVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+              else if (multiplierSource === "Override Total") mVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
+              else if (rowCalculatedValues[multiplierSource] !== undefined) mVal = rowCalculatedValues[multiplierSource];
+              else mVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0") || 0;
+
+              if (operator === "%") val = bVal * (mVal / 100);
+              else if (operator === "*") val = bVal * mVal;
+              else if (operator === "/") val = mVal !== 0 ? bVal / mVal : 0;
+              else if (operator === "+") val = bVal + mVal;
+            } else {
+              val = parseFloat(customColumnValues[boqItem.id]?.[0]?.[col.name] || "0") || 0;
+            }
+            rowCalculatedValues[col.name] = val;
+            accumulator += val;
+            customVals.push(val.toFixed(2));
           }
         });
 
@@ -1879,7 +2000,8 @@ export default function FinalizeBoq() {
           (boqIdx + 1).toString(),
           productName,
           manualDesc,
-          tableData.hsn_sac_code || "—",
+          tableData.hsn_code || (tableData.hsn_sac_type === 'hsn' ? tableData.hsn_sac_code : "") || "—",
+          tableData.sac_code || (tableData.hsn_sac_type === 'sac' ? tableData.hsn_sac_code : "") || "—",
           rateSqft.toFixed(2),
           currentStep11Items[0]?.unit || tableData.unit || "",
           (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (currentStep11Items[0]?.qty || 0))).toFixed(2),
@@ -1889,6 +2011,23 @@ export default function FinalizeBoq() {
           ...customVals
         ]);
       });
+
+      // Add Grand Totals footer row to PDF body
+      const footerRow = [
+        "",
+        "GRAND TOTAL",
+        "",
+        "",
+        "",
+        calculatedColumnTotals.totalRateSum.toFixed(2),
+        "",
+        "",
+        hideSystemTotalFooter ? "" : calculatedColumnTotals.totalValueSum.toFixed(2),
+        "",
+        calculatedColumnTotals.overrideTotalSum.toFixed(2),
+        ...allCols.map((col, idx) => col.hideTotal ? "" : calculatedColumnTotals.totals[idx].toFixed(2))
+      ];
+      body.push(footerRow);
 
       // 4. Logo Fetching
       const logoPath = "/image.png";
@@ -2217,14 +2356,14 @@ export default function FinalizeBoq() {
                 { label: "B: #", name: "S.No" },
                 { label: "C: Product / Material", name: "Product / Material" },
                 { label: "D: Description / Location", name: "Description / Location" },
-                { label: "E: Rate / Unit", name: "Rate / Unit" },
-                { label: "F: Unit", name: "Unit" },
-                { label: "G: Qty", name: "Qty" },
-                { label: "H: Total Value (₹)", name: "Total Value (₹)" },
-                { label: "I: Override Rate (₹)", name: "Override Rate" },
-                { label: "J: Override Total (₹)", name: "Override Total" },
+                { label: "G: Rate / Unit", name: "Rate / Unit" },
+                { label: "H: Unit", name: "Unit" },
+                { label: "I: Qty", name: "Qty" },
+                { label: "J: Total Value (₹)", name: "Total Value (₹)" },
+                { label: "K: Override Rate (₹)", name: "Override Rate" },
+                { label: "L: Override Total (₹)", name: "Override Total" },
                 ...allCols.map((c, idx) => ({
-                  label: `${getExcelColumnName(idx + 10)}: ${c.name}`,
+                  label: `${getExcelColumnName(idx + 12)}: ${c.name}`,
                   name: c.name
                 }))
               ].map(col => (
@@ -2430,38 +2569,46 @@ export default function FinalizeBoq() {
                   <table className="border-collapse text-sm min-w-full">
                     <thead>
                       {/* Excel-style Column Labels */}
-                      <tr className="bg-gray-200/50 border-b border-gray-300 text-[10px] font-bold text-gray-500 shadow-inner">
-                        <th className="border-r py-1 w-10 text-center">A</th>
-                        <th className="border-r py-1 w-12 text-center text-blue-600">B</th>
-                        <th className="border-r py-1 text-center font-extrabold">C</th>
-                        <th className="border-r py-1 text-center font-bold">D</th>
-                        <th className="border-r py-1 text-center font-bold">E</th>
-                        <th className="border-r py-1 text-center font-bold">F</th>
-                        <th className="border-r py-1 text-center font-bold">G</th>
-                        <th className="border-r py-1 text-center font-bold">H</th>
-                        <th className="border-r py-1 text-center text-green-700">I</th>
-                        <th className="border-r py-1 text-center text-blue-700">J</th>
-                        <th className="border-r py-1 text-center text-green-700">K</th>
+                      <tr className="bg-sky-50 border-b border-sky-200 text-[11px] font-black text-sky-800 shadow-inner">
+                        <th className="border-r border-sky-200 py-1.5 w-10 text-center">A</th>
+                        <th className="border-r border-sky-200 py-1.5 w-12 text-center text-blue-700">B</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-64">C</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-72">D</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-24">E</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-24">F</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-32">G</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-24">H</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center w-28">I</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center text-green-800 w-32">J</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center text-blue-800 w-32">K</th>
+                        <th className="border-r border-sky-200 py-1.5 text-center text-green-800 w-32">L</th>
                         {allCols.map((_, idx) => (
-                          <th key={idx} className="border-r py-0.5 text-center text-purple-700 text-[8px] font-bold bg-purple-50/20">
-                            {getExcelColumnName(idx + 11)}
+                          <th key={idx} className="border-r border-sky-200 py-1.5 text-center text-slate-900 text-[11px] font-black bg-sky-100/50">
+                            {getExcelColumnName(idx + 12)}
                           </th>
                         ))}
                       </tr>
-                      <tr className="bg-gray-100/80 border-b border-gray-200 text-[12px] font-semibold text-gray-700 uppercase tracking-widest shadow-sm">
-                        <th className="border-r px-2 py-1.5 text-center w-10">
-                          <GripVertical size={16} className="mx-auto text-gray-400" />
+                      {/* Grouping Header Row */}
+                      <tr className="bg-sky-100 text-slate-900 text-[13px] font-black uppercase tracking-widest border-b border-sky-200">
+                        <th colSpan={10} className="py-2.5 border-r border-sky-200 bg-sky-200/40">Item Details</th>
+                        <th colSpan={2} className="py-2.5 border-r border-sky-200 bg-blue-200 text-blue-900">OVERRIDE</th>
+                        <th colSpan={allCols.length} className="py-2.5 bg-purple-200 text-purple-900">Custom Filters & Totals</th>
+                      </tr>
+                      <tr className="bg-sky-200 text-slate-900 border-b border-sky-300 text-[12px] font-black uppercase tracking-wider shadow-sm">
+                        <th className="border-r border-sky-300 px-2 py-2.5 text-center w-10">
+                          <GripVertical size={18} className="mx-auto text-sky-600" />
                         </th>
-                        <th className="border-r px-1 py-1.5 text-left min-w-[30px] w-10 text-[10px]">S.No</th>
-                        <th className="border-r px-1.5 py-1.5 text-left min-w-[200px] text-[10px]">Product / Material</th>
-                        <th className="border-r px-1.5 py-1.5 text-left min-w-[200px] text-[10px]">Description / Location</th>
-                        <th className="border-r px-1 py-1.5 text-center w-28 text-[10px]">HSN/SAC</th>
-                        <th className="border-r px-1 py-1.5 text-right w-24 text-[10px]">Rate</th>
-                        <th className="border-r px-1 py-1.5 text-center w-20 text-[10px]">Unit</th>
-                        <th className="border-r px-1 py-1.5 text-center w-28 text-[10px]">Qty</th>
-                        <th className="border-r px-1 py-1.5 text-right w-28 text-green-900 bg-green-50/30 text-[10px]">Total (₹)</th>
-                        <th className="border-r px-1 py-1.5 text-right w-28 text-blue-900 bg-blue-50/30 text-[10px]">O.Rate (₹)</th>
-                        <th className="border-r px-1 py-1.5 text-right w-28 text-green-900 bg-green-50/30 text-[10px]">O.Total (₹)</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-left min-w-[30px] w-12 text-[11px]">S.No</th>
+                        <th className="border-r border-sky-300 px-3 py-2.5 text-left min-w-[250px] text-[11px]">Product / Material</th>
+                        <th className="border-r border-sky-300 px-3 py-2.5 text-left min-w-[250px] text-[11px]">Description / Location</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-center w-24 text-[11px]">HSN</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-center w-24 text-[11px]">SAC</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-right w-32 text-[11px]">Rate</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-center w-24 text-[11px]">Unit</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-center w-28 text-[11px]">Qty</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-right w-32 text-emerald-900 bg-emerald-100/50 text-[11px]">System Total</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-right w-32 text-blue-900 bg-blue-100/50 text-[11px]">Rate (j)</th>
+                        <th className="border-r border-sky-300 px-1 py-2.5 text-right w-32 text-emerald-900 bg-emerald-100/50 text-[11px]">Total (k)</th>
                         <Reorder.Group
                           axis="x"
                           values={allCols}
@@ -2487,6 +2634,7 @@ export default function FinalizeBoq() {
                               toast={toast}
                               setCustomColumns={setCustomColumns}
                               setCustomColumnValues={setCustomColumnValues}
+                              setGlobalColSettings={setGlobalColSettings}
                             />
                           ))}
                         </Reorder.Group>
@@ -2563,12 +2711,17 @@ export default function FinalizeBoq() {
                             key={boqItem.id}
                             value={boqItem}
                             as="tr"
+                            dragListener={false}
+                            dragControls={dragControls}
                             className={`hover:bg-blue-50/40 cursor-default transition-colors border-b border-gray-100 ${isSelected ? "bg-blue-50/60" : "bg-white"}`}
                           >
                             <td className="border-r px-2 py-1.5 text-center bg-gray-50/50 align-middle">
                               <div className="flex flex-col items-center gap-1">
                                 <span className="text-[10px] font-bold text-gray-500">{boqIdx + 1}</span>
-                                <div className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-blue-400 transition-colors flex items-center justify-center">
+                                <div
+                                  onPointerDown={(e) => dragControls.start(e)}
+                                  className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-blue-400 transition-colors flex items-center justify-center"
+                                >
                                   <GripVertical size={14} className="mx-auto" />
                                 </div>
                               </div>
@@ -2608,7 +2761,10 @@ export default function FinalizeBoq() {
                               />
                             </td>
                             <td className="border-r px-2 py-1 text-center font-semibold text-gray-700 text-[10px] align-middle bg-gray-50/30">
-                              {tableData.hsn_sac_code || "—"}
+                              {tableData.hsn_code || (tableData.hsn_sac_type === 'hsn' ? tableData.hsn_sac_code : "") || "—"}
+                            </td>
+                            <td className="border-r px-2 py-1 text-center font-semibold text-gray-700 text-[10px] align-middle bg-gray-50/30">
+                              {tableData.sac_code || (tableData.hsn_sac_type === 'sac' ? tableData.hsn_sac_code : "") || "—"}
                             </td>
                             <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-500 text-[10px] align-middle">
                               ₹{rateSqft.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -2752,17 +2908,41 @@ export default function FinalizeBoq() {
                                                 }}
                                               >
                                                 <option value="manual">Val</option>
-                                                <option value="Rate / Unit">E: Rate</option>
-                                                <option value="Unit">F: Unit</option>
-                                                <option value="Qty">G: Qty</option>
-                                                <option value="Total Value (₹)">H: Total</option>
-                                                <option value="Override Rate">I: O.Rate</option>
-                                                <option value="Override Total">J: O.Total</option>
+                                                <option value="Rate / Unit">G: Rate</option>
+                                                <option value="Unit">H: Unit</option>
+                                                <option value="Qty">I: Qty</option>
+                                                <option value="Total Value (₹)">J: Total</option>
+                                                <option value="Override Rate">K: O.Rate</option>
+                                                <option value="Override Total">L: O.Total</option>
                                                 {allCols.filter(c => c.name !== col.name).map((c) => {
                                                   const ci = allCols.findIndex(cc => cc.name === c.name);
                                                   return (
                                                     <option key={c.name} value={c.name}>
-                                                      {getExcelColumnName(ci + 11)}: {c.name.substring(0, 8)}
+                                                      {getExcelColumnName(ci + 12)}: {c.name.substring(0, 8)}
+                                                    </option>
+                                                  );
+                                                })}
+                                              </select>
+
+                                              <select
+                                                className="bg-white border border-purple-300 rounded text-[10px] font-semibold text-purple-700 outline-none h-6 px-1 cursor-pointer"
+                                                value={(itemCol as any).baseSource || "manual"}
+                                                disabled={isVersionSubmitted}
+                                                onChange={(e) => {
+                                                  handleItemCalculation(boqItem.id, col.name, itemMultiplier, itemOp, (itemCol as any).multiplierSource || "manual", e.target.value);
+                                                }}
+                                              >
+                                                <option value="manual">Source</option>
+                                                <option value="Total Value (₹)">J: Total</option>
+                                                <option value="Rate / Unit">G: Rate</option>
+                                                <option value="Qty">I: Qty</option>
+                                                <option value="Override Rate">K: O.Rate</option>
+                                                <option value="Override Total">L: O.Total</option>
+                                                {allCols.filter(c => c.name !== col.name).map((c) => {
+                                                  const ci = allCols.findIndex(cc => cc.name === c.name);
+                                                  return (
+                                                    <option key={c.name} value={c.name}>
+                                                      {getExcelColumnName(ci + 12)}: {c.name.substring(0, 8)}
                                                     </option>
                                                   );
                                                 })}
@@ -2776,7 +2956,7 @@ export default function FinalizeBoq() {
                                                   disabled={isVersionSubmitted}
                                                   onChange={(e) => {
                                                     const newVal = parseFloat(e.target.value) || 0;
-                                                    handleItemCalculation(boqItem.id, col.name, newVal, itemOp, (itemCol as any).multiplierSource || "manual");
+                                                    handleItemCalculation(boqItem.id, col.name, newVal, itemOp, (itemCol as any).multiplierSource || "manual", (itemCol as any).baseSource || "manual");
                                                   }}
                                                 />
                                               )}
@@ -2786,7 +2966,7 @@ export default function FinalizeBoq() {
                                                 value={itemOp}
                                                 disabled={isVersionSubmitted}
                                                 onChange={(e) => {
-                                                  handleItemCalculation(boqItem.id, col.name, itemMultiplier, e.target.value, (itemCol as any).multiplierSource || "manual");
+                                                  handleItemCalculation(boqItem.id, col.name, itemMultiplier, e.target.value, (itemCol as any).multiplierSource || "manual", (itemCol as any).baseSource || "manual");
                                                 }}
                                               >
                                                 <option value="%">%</option>
@@ -2814,20 +2994,7 @@ export default function FinalizeBoq() {
                                           placeholder="0.00"
                                         />
 
-                                        <div className="flex justify-end mt-1">
-                                          <span className="text-[9px] px-1.5 py-0.5 bg-purple-600/10 text-purple-700 border border-purple-200/50 rounded-full font-bold uppercase tracking-wider truncate max-w-[120px] shadow-sm flex items-center gap-1">
-                                            {(() => {
-                                              const src = (itemCol as any).baseSource;
-                                              if (src === "Total Value (₹)") return "H: TOTAL";
-                                              if (src === "Rate / Unit") return "E: RATE";
-                                              if (src === "Qty") return "G: QTY";
-                                              if (src === "Unit") return "F: UNIT";
-                                              const cIdx = allCols.findIndex(cc => cc.name === src);
-                                              if (cIdx >= 0) return `${getExcelColumnName(cIdx + 11)}: ${src}`;
-                                              return src || "MANUAL";
-                                            })()}
-                                          </span>
-                                        </div>
+                                        {/* Row-level badges removed per user request */}
                                       </div>
                                     </td>
                                   );
@@ -2856,10 +3023,13 @@ export default function FinalizeBoq() {
                           <td className="border-r px-4 py-3 text-right font-semibold text-gray-600 bg-gray-50/50">
                             {/* Description total - empty */}
                           </td>
-                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-28">
-                            {/* HSN/SAC Total - empty */}
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-24">
+                            {/* HSN Total - empty */}
                           </td>
-                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-28">
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-24">
+                            {/* SAC Total - empty */}
+                          </td>
+                          <td className="border-r px-2 py-1.5 text-right font-semibold text-gray-600 bg-gray-50/50 text-[11px] w-32">
                             ₹{calculatedColumnTotals.totalRateSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                           <td className="border-r px-4 py-3 text-right font-semibold text-gray-600 bg-gray-50/50">
