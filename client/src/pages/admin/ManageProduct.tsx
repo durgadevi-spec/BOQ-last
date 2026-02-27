@@ -191,10 +191,12 @@ export default function ManageProduct() {
         enabled: step === 2,
     });
 
-    // Deduplicate by id (some installs may have duplicate rows). Then filter by category/subcategory.
-    // Prefer deduplication by `code` (many materials share same code across shops), fallback to id
+    // Keep each material row distinct per record (preserve different shop/rate rows).
+    // Previously we deduplicated by `code`, which collapsed multiple shop rows
+    // (different rates for the same code) into a single entry. Use `id` so
+    // each DB row is kept separate in the Manage Product selector.
     const uniqueMaterials = Array.from(
-        new Map((materialsData || []).map(m => [(m.code || m.id || Math.random()).toString().trim().toLowerCase(), m])).values()
+        new Map((materialsData || []).map(m => [(m.id || Math.random()).toString(), m])).values()
     );
 
     const [materialSearch, setMaterialSearch] = useState<string>("");
