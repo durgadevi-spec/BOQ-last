@@ -2552,13 +2552,14 @@ export async function registerRoutes(
         const name = decodeURIComponent(req.params.name);
 
         const subcategories = await query("SELECT name FROM material_subcategories WHERE category = $1", [name]);
-        const templates = await query("SELECT name FROM material_templates WHERE category = $1", [name]);
-        const materials = await query("SELECT name FROM materials WHERE template_id IN (SELECT id FROM material_templates WHERE category = $1)", [name]);
+        const products = await query(
+          "SELECT name FROM products WHERE subcategory IN (SELECT name FROM material_subcategories WHERE category = $1)",
+          [name]
+        );
 
         res.json({
           subcategories: subcategories.rows.map(r => r.name),
-          templates: templates.rows.map(r => r.name),
-          materials: materials.rows.map(r => r.name)
+          products: products.rows.map(r => r.name)
         });
       } catch (err) {
         console.error("/api/categories/:name/impact error", err);
@@ -2576,7 +2577,7 @@ export async function registerRoutes(
       try {
         const { id } = req.params;
 
-        // Find subcategory name first to query products/materials
+        // Find subcategory name first to query products
         const subResult = await query("SELECT name FROM material_subcategories WHERE id = $1", [id]);
         if (subResult.rows.length === 0) {
           return res.status(404).json({ message: "Subcategory not found" });
@@ -2584,11 +2585,9 @@ export async function registerRoutes(
         const subName = subResult.rows[0].name;
 
         const products = await query("SELECT name FROM products WHERE subcategory = $1", [subName]);
-        const materials = await query("SELECT name FROM materials WHERE subcategory = $1", [subName]);
 
         res.json({
-          products: products.rows.map(r => r.name),
-          materials: materials.rows.map(r => r.name)
+          products: products.rows.map(r => r.name)
         });
       } catch (err) {
         console.error("/api/subcategories/:id/impact error", err);

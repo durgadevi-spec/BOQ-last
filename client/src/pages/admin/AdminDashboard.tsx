@@ -1860,11 +1860,8 @@ export default function AdminDashboard() {
                                         if (impact.subcategories?.length > 0) {
                                           message += `The following ${impact.subcategories.length} subcategories will be deleted:\n- ${impact.subcategories.slice(0, 5).join(', ')}${impact.subcategories.length > 5 ? '...' : ''}\n\n`;
                                         }
-                                        if (impact.templates?.length > 0) {
-                                          message += `The following ${impact.templates.length} material templates will be deleted:\n- ${impact.templates.slice(0, 5).join(', ')}${impact.templates.length > 5 ? '...' : ''}\n\n`;
-                                        }
-                                        if (impact.materials?.length > 0) {
-                                          message += `The following ${impact.materials.length} materials will be deleted:\n- ${impact.materials.slice(0, 5).join(', ')}${impact.materials.length > 5 ? '...' : ''}\n\n`;
+                                        if (impact.products?.length > 0) {
+                                          message += `The following ${impact.products.length} products will be deleted or orphaned:\n- ${impact.products.slice(0, 5).join(', ')}${impact.products.length > 5 ? '...' : ''}\n\n`;
                                         }
 
                                         message += "This action cannot be undone.";
@@ -2056,9 +2053,6 @@ export default function AdminDashboard() {
 
                                       if (impact.products?.length > 0) {
                                         message += `The following ${impact.products.length} products will be deleted or orphaned:\n- ${impact.products.slice(0, 5).join(', ')}${impact.products.length > 5 ? '...' : ''}\n\n`;
-                                      }
-                                      if (impact.materials?.length > 0) {
-                                        message += `The following ${impact.materials.length} materials will be deleted or orphaned:\n- ${impact.materials.slice(0, 5).join(', ')}${impact.materials.length > 5 ? '...' : ''}\n\n`;
                                       }
 
                                       message += "This action cannot be undone.";
