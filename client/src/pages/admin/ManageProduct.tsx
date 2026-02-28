@@ -83,6 +83,7 @@ export default function ManageProduct() {
     const [isSaving, setIsSaving] = useState(false);
     const [previousConfigs, setPreviousConfigs] = useState<any[]>([]);
     const [isLoadingConfigs, setIsLoadingConfigs] = useState(false);
+    const [productSearch, setProductSearch] = useState("");
     const { toast } = useToast();
 
     // BOQ Config Basis state
@@ -153,6 +154,14 @@ export default function ManageProduct() {
             return ((data.products || []) as Product[]).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
         },
     });
+
+    // Step 1: Filter Products
+    const filteredProducts = useMemo(() => {
+        if (!productsData) return [];
+        if (!productSearch) return productsData;
+        const q = productSearch.toLowerCase();
+        return productsData.filter(p => (p.name || "").toLowerCase().includes(q));
+    }, [productsData, productSearch]);
 
     // Step 2: Fetch Categories
     const { data: categoriesData } = useQuery({
@@ -640,7 +649,12 @@ export default function ManageProduct() {
                                     <h2 className="text-2xl font-bold">1. Select Base Product</h2>
                                     <div className="relative w-full md:w-80">
                                         <Search className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
-                                        <Input placeholder="Search by name..." className="pl-10 h-10" />
+                                        <Input
+                                            placeholder="Search by name..."
+                                            className="pl-10 h-10"
+                                            value={productSearch}
+                                            onChange={(e) => setProductSearch(e.target.value)}
+                                        />
                                     </div>
                                 </div>
 
@@ -650,49 +664,53 @@ export default function ManageProduct() {
                                         <p className="text-muted-foreground font-medium">Loading products...</p>
                                     </div>
                                 ) : (
-                                    <div className="rounded-xl border shadow-sm overflow-hidden bg-white">
+                                    <div className="rounded-xl border shadow-sm overflow-hidden bg-white max-h-[500px] overflow-y-auto">
                                         <Table>
-                                            <TableHeader className="bg-muted/30">
+                                            <TableHeader className="bg-muted/30 sticky top-0 z-10">
                                                 <TableRow>
                                                     <TableHead className="w-[60px]"></TableHead>
                                                     <TableHead className="font-bold">Product Name</TableHead>
                                                     <TableHead className="font-bold">Created Date</TableHead>
-
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
-                                                {productsData?.map((product) => (
-                                                    <TableRow
-                                                        key={product.id}
-                                                        className={`hover:bg-muted/20 transition-colors cursor-pointer ${selectedProduct?.id === product.id ? "bg-primary/5 hover:bg-primary/10" : ""
-                                                            }`}
-                                                        onClick={() => {
-                                                            setSelectedProduct(product);
-                                                            // Reset state first to ensure "nothing from previous loads"
-                                                            resetSelection();
-                                                        }}
-                                                    >
-                                                        <TableCell onClick={(e) => e.stopPropagation()}>
-                                                            <Checkbox
-                                                                checked={selectedProduct?.id === product.id}
-                                                                onCheckedChange={(checked) => {
-                                                                    if (checked) {
-                                                                        setSelectedProduct(product);
-                                                                        // Reset state first to ensure "nothing from previous loads"
-                                                                        resetSelection();
-                                                                    } else {
-                                                                        setSelectedProduct(null);
-                                                                    }
-                                                                }}
-                                                            />
+                                                {filteredProducts.length === 0 ? (
+                                                    <TableRow>
+                                                        <TableCell colSpan={3} className="text-center py-10 text-muted-foreground">
+                                                            No products found matching "{productSearch}"
                                                         </TableCell>
-                                                        <TableCell className="font-semibold text-base">{product.name}</TableCell>
-                                                        <TableCell className="text-muted-foreground">
-                                                            {product.created_at ? new Date(product.created_at).toLocaleDateString() : 'N/A'}
-                                                        </TableCell>
-
                                                     </TableRow>
-                                                ))}
+                                                ) : (
+                                                    filteredProducts.map((product) => (
+                                                        <TableRow
+                                                            key={product.id}
+                                                            className={`hover:bg-muted/20 transition-colors cursor-pointer ${selectedProduct?.id === product.id ? "bg-primary/5 hover:bg-primary/10" : ""
+                                                                }`}
+                                                            onClick={() => {
+                                                                setSelectedProduct(product);
+                                                                resetSelection();
+                                                            }}
+                                                        >
+                                                            <TableCell onClick={(e) => e.stopPropagation()}>
+                                                                <Checkbox
+                                                                    checked={selectedProduct?.id === product.id}
+                                                                    onCheckedChange={(checked) => {
+                                                                        if (checked) {
+                                                                            setSelectedProduct(product);
+                                                                            resetSelection();
+                                                                        } else {
+                                                                            setSelectedProduct(null);
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            </TableCell>
+                                                            <TableCell className="font-semibold text-base">{product.name}</TableCell>
+                                                            <TableCell className="text-muted-foreground">
+                                                                {product.created_at ? new Date(product.created_at).toLocaleDateString() : 'N/A'}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))
+                                                )}
                                             </TableBody>
                                         </Table>
                                     </div>

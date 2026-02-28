@@ -27,6 +27,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { useData, Material, Shop } from "@/lib/store";
 import {
@@ -193,6 +203,83 @@ export default function AdminDashboard() {
   const [filterProductBySubCategory, setFilterProductBySubCategory] = useState("all");
 
   const [showAddProductDialog, setShowAddProductDialog] = useState(false);
+
+  // DELETE CONFIRMATION STATE
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteData, setDeleteData] = useState<{
+    type: 'category' | 'subcategory';
+    name: string;
+    id?: string;
+    impact: { subcategories?: string[], products?: string[] };
+  } | null>(null);
+
+  const requestDeleteCategory = async (cat: string) => {
+    try {
+      const impactRes = await apiFetch(`/categories/${encodeURIComponent(cat)}/impact`);
+      const impact = await impactRes.json();
+      setDeleteData({
+        type: 'category',
+        name: cat,
+        impact: {
+          subcategories: impact.subcategories || [],
+          products: impact.products || []
+        }
+      });
+      setDeleteConfirmOpen(true);
+    } catch (err) {
+      console.error('delete category impact error', err);
+      toast({ title: 'Error', description: 'Failed to fetch impact data', variant: 'destructive' });
+    }
+  };
+
+  const requestDeleteSubCategory = async (sub: any) => {
+    try {
+      const impactRes = await apiFetch(`/subcategories/${sub.id}/impact`);
+      const impact = await impactRes.json();
+      setDeleteData({
+        type: 'subcategory',
+        name: sub.name,
+        id: sub.id,
+        impact: {
+          products: impact.products || []
+        }
+      });
+      setDeleteConfirmOpen(true);
+    } catch (err) {
+      console.error('delete subcategory impact error', err);
+      toast({ title: 'Error', description: 'Failed to fetch impact data', variant: 'destructive' });
+    }
+  };
+
+  const confirmDeleteAction = async () => {
+    if (!deleteData) return;
+
+    try {
+      if (deleteData.type === 'category') {
+        const cat = deleteData.name;
+        await apiFetch(`/categories/${encodeURIComponent(cat)}`, { method: 'DELETE' });
+        setCategories(prev => prev.filter(c => c !== cat));
+        setSubCategories(prev => prev.filter(s => s.category !== cat));
+        toast({ title: 'Deleted', description: `Category ${cat} removed` });
+      } else {
+        const id = deleteData.id!;
+        const res = await apiFetch(`/subcategories/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          setSubCategories(prev => prev.filter(s => s.id !== id));
+          toast({ title: 'Deleted', description: `Subcategory ${deleteData.name} removed` });
+        } else {
+          toast({ title: 'Error', description: 'Failed to delete subcategory', variant: 'destructive' });
+        }
+      }
+    } catch (err) {
+      console.error('delete action error', err);
+      toast({ title: 'Error', description: `Failed to delete ${deleteData.type}`, variant: 'destructive' });
+    } finally {
+      setDeleteConfirmOpen(false);
+      setDeleteData(null);
+    }
+  };
+
 
   // Handle Add Category
   const handleAddCategory = async () => {
@@ -455,29 +542,74 @@ export default function AdminDashboard() {
 
   // Search inputs for dashboard lists
   const [shopSearch, setShopSearch] = useState<string>("");
+  const [shopVendorCategoryFilter, setShopVendorCategoryFilter] = useState<string>("all");
   const [materialSearch, setMaterialSearch] = useState<string>("");
+
+  // Material list filters (category + subcategory)
+  const [materialCategoryFilter, setMaterialCategoryFilter] = useState<string>("all");
+  const [materialSubcategoryFilter, setMaterialSubcategoryFilter] = useState<string>("all");
 
   // Toggle states for full-page lists
   const [showShopsList, setShowShopsList] = useState(false);
   const [showMaterialsList, setShowMaterialsList] = useState(false);
 
   const filteredShops = localShops.filter((s: any) => {
-    if (!shopSearch) return true;
-    const q = shopSearch.toLowerCase();
-    return (
-      (s.name || "").toLowerCase().includes(q) ||
-      (s.location || "").toLowerCase().includes(q) ||
-      (s.city || "").toLowerCase().includes(q)
-    );
+    // text search
+    if (shopSearch) {
+      const q = shopSearch.toLowerCase();
+      const match = (s.name || "").toLowerCase().includes(q) ||
+        (s.location || "").toLowerCase().includes(q) ||
+        (s.city || "").toLowerCase().includes(q);
+      if (!match) return false;
+    }
+
+    // vendor category filter
+    if (shopVendorCategoryFilter && shopVendorCategoryFilter !== 'all') {
+      const shopCat = (s.vendorCategory || "").toString().trim().toLowerCase();
+      if (shopCat !== shopVendorCategoryFilter.toLowerCase()) return false;
+    }
+
+    return true;
   });
 
   const filteredMaterials = localMaterials.filter((m: any) => {
-    if (!materialSearch) return true;
-    const q = materialSearch.toLowerCase();
-    return (
-      (m.name || "").toLowerCase().includes(q) ||
-      (m.code || "").toLowerCase().includes(q)
-    );
+    // text search
+    if (materialSearch) {
+      const q = materialSearch.toLowerCase();
+      const nameMatch = (m.name || "").toLowerCase().includes(q);
+      const codeMatch = (m.code || "").toLowerCase().includes(q);
+      if (!nameMatch && !codeMatch) return false;
+    }
+
+    // category filter (supports comma-separated stored categories)
+    if (materialCategoryFilter && materialCategoryFilter !== 'all') {
+      const catField = (m.category || "").toString().trim();
+      if (materialCategoryFilter === 'uncategorized') {
+        if (catField !== "") return false;
+      } else {
+        const catMatches = catField
+          .split(",")
+          .map((s: string) => s.trim().toLowerCase())
+          .includes(materialCategoryFilter.toLowerCase());
+        if (!catMatches) return false;
+      }
+    }
+
+    // subcategory filter
+    if (materialSubcategoryFilter && materialSubcategoryFilter !== 'all') {
+      const subField = (m.subcategory || "").toString().trim();
+      if (materialSubcategoryFilter === 'uncategorized') {
+        if (subField !== "") return false;
+      } else {
+        const subMatches = subField
+          .split(",")
+          .map((s: string) => s.trim().toLowerCase())
+          .includes(materialSubcategoryFilter.toLowerCase());
+        if (!subMatches) return false;
+      }
+    }
+
+    return true;
   });
 
   const [supportMsgs, setSupportMsgs] = useState<any[]>([]);
@@ -1315,14 +1447,30 @@ export default function AdminDashboard() {
                   </CardHeader>
                   {showShopsList && (
                     <CardContent className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                      <div className="flex items-center gap-2">
-                        <Search className="h-4 w-4 text-muted-foreground" />
-                        <Input
-                          value={shopSearch}
-                          onChange={(e) => setShopSearch(e.target.value)}
-                          placeholder="Search shops by name, city or location..."
-                          className="h-9"
-                        />
+                      <div className="flex flex-col md:flex-row items-center gap-3">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            value={shopSearch}
+                            onChange={(e) => setShopSearch(e.target.value)}
+                            placeholder="Search shops by name, city or location..."
+                            className="h-10 pl-9"
+                          />
+                        </div>
+                        <Select
+                          value={shopVendorCategoryFilter}
+                          onValueChange={setShopVendorCategoryFilter}
+                        >
+                          <SelectTrigger className="w-full md:w-[220px] h-10">
+                            <SelectValue placeholder="All Vendor Categories" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-[300px]">
+                            <SelectItem value="all">All Vendor Categories</SelectItem>
+                            {vendorCategories.map((vc: any) => (
+                              <SelectItem key={vc.id} value={vc.name}>{vc.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="max-h-[800px] overflow-y-auto pr-2 border rounded-md">
                         {filteredShops.length === 0 ? (
@@ -1464,8 +1612,40 @@ export default function AdminDashboard() {
                           value={materialSearch}
                           onChange={(e) => setMaterialSearch(e.target.value)}
                           placeholder="Search materials..."
-                          className="h-9"
+                          className="h-9 w-full max-w-[360px]"
                         />
+
+                        <div className="flex items-center gap-2 ml-auto">
+                          <div className="w-44">
+                            <Select value={materialCategoryFilter} onValueChange={(val) => { setMaterialCategoryFilter(val); setMaterialSubcategoryFilter('all'); }}>
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="All Categories" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[300px] overflow-y-auto">
+                                <SelectItem value="all">All Categories</SelectItem>
+                                <SelectItem value="uncategorized" className="text-destructive font-medium italic">Uncategorized</SelectItem>
+                                {categories?.map((cat) => (
+                                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="w-44">
+                            <Select value={materialSubcategoryFilter} onValueChange={setMaterialSubcategoryFilter} disabled={materialCategoryFilter === 'all'}>
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="All Subcategories" />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[300px] overflow-y-auto">
+                                <SelectItem value="all">All Subcategories</SelectItem>
+                                <SelectItem value="uncategorized" className="text-destructive font-medium italic">Uncategorized</SelectItem>
+                                {materialCategoryFilter !== 'all' && materialCategoryFilter !== 'uncategorized' && getSubCategoriesForCategory(materialCategoryFilter).map((sub: any) => (
+                                  <SelectItem key={sub.id || sub.name} value={sub.name}>{sub.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
                       </div>
                       <div className="max-h-[800px] overflow-y-auto pr-2 border rounded-md">
                         {filteredMaterials.length === 0 ? (
@@ -1850,76 +2030,50 @@ export default function AdminDashboard() {
                                     }}>
                                       Edit
                                     </Button>
-                                    <Button size="sm" variant="destructive" onClick={async () => {
-                                      try {
-                                        const impactRes = await apiFetch(`/categories/${encodeURIComponent(cat)}/impact`);
-                                        const impact = await impactRes.json();
-
-                                        let message = `Are you sure you want to delete category "${cat}"?\n\n`;
-
-                                        if (impact.subcategories?.length > 0) {
-                                          message += `The following ${impact.subcategories.length} subcategories will be deleted:\n- ${impact.subcategories.slice(0, 5).join(', ')}${impact.subcategories.length > 5 ? '...' : ''}\n\n`;
-                                        }
-                                        if (impact.products?.length > 0) {
-                                          message += `The following ${impact.products.length} products will be deleted or orphaned:\n- ${impact.products.slice(0, 5).join(', ')}${impact.products.length > 5 ? '...' : ''}\n\n`;
-                                        }
-
-                                        message += "This action cannot be undone.";
-
-                                        if (!window.confirm(message)) return;
-
-                                        await apiFetch(`/categories/${encodeURIComponent(cat)}`, { method: 'DELETE' });
-                                        setCategories(prev => prev.filter(c => c !== cat));
-                                        setSubCategories(prev => prev.filter(s => s.category !== cat));
-                                        toast({ title: 'Deleted', description: `Category ${cat} removed` });
-                                      } catch (err) {
-                                        console.error('delete category error', err);
-                                        toast({ title: 'Error', description: 'Failed to delete category', variant: 'destructive' });
-                                      }
-                                    }}>
+                                    <Button size="sm" variant="destructive" onClick={() => requestDeleteCategory(cat)}>
                                       <Trash2 className="h-4 w-4" />
                                     </Button>
                                   </div>
                                 )}
-                                {editingCategory === cat && (
-                                  <div className="mt-3 p-3 bg-gray-100 rounded border col-span-full">
-                                    <div className="flex gap-2">
-                                      <Input
-                                        value={editingCategoryValue}
-                                        onChange={(e) => setEditingCategoryValue(e.target.value)}
-                                        placeholder="Category name"
-                                        className="text-sm"
-                                      />
-                                      <Button size="sm" onClick={async () => {
-                                        const oldName = editingCategory;
-                                        const newName = editingCategoryValue.trim();
-                                        if (!newName) {
-                                          toast({ title: 'Error', description: 'Category name cannot be empty', variant: 'destructive' });
-                                          return;
-                                        }
-                                        try {
-                                          await apiFetch(`/categories/${encodeURIComponent(oldName)}`, {
-                                            method: 'PUT',
-                                            body: JSON.stringify({ name: newName }),
-                                          });
-                                          setCategories((prev: string[]) => prev.map((c: string) => c === oldName ? newName : c));
-                                          setSubCategories((prev: any[]) => prev.map((s: any) => s.category === oldName ? { ...s, category: newName } : s));
-                                          setEditingCategory(null);
-                                          setEditingCategoryValue("");
-                                          toast({ title: 'Success', description: `Category updated to ${newName}` });
-                                        } catch (err) {
-                                          console.error('update category error', err);
-                                          toast({ title: 'Error', description: 'Failed to update category', variant: 'destructive' });
-                                        }
-                                      }}>Save</Button>
-                                      <Button size="sm" variant="ghost" onClick={() => {
+                              </div>
+                              {editingCategory === cat && (
+                                <div className="mt-3 p-3 bg-gray-100 rounded border col-span-full">
+                                  <div className="flex gap-2">
+                                    <Input
+                                      value={editingCategoryValue}
+                                      onChange={(e) => setEditingCategoryValue(e.target.value)}
+                                      placeholder="Category name"
+                                      className="text-sm"
+                                    />
+                                    <Button size="sm" onClick={async () => {
+                                      const oldName = editingCategory;
+                                      const newName = editingCategoryValue.trim();
+                                      if (!newName) {
+                                        toast({ title: 'Error', description: 'Category name cannot be empty', variant: 'destructive' });
+                                        return;
+                                      }
+                                      try {
+                                        await apiFetch(`/categories/${encodeURIComponent(oldName)}`, {
+                                          method: 'PUT',
+                                          body: JSON.stringify({ name: newName }),
+                                        });
+                                        setCategories((prev: string[]) => prev.map((c: string) => c === oldName ? newName : c));
+                                        setSubCategories((prev: any[]) => prev.map((s: any) => s.category === oldName ? { ...s, category: newName } : s));
                                         setEditingCategory(null);
                                         setEditingCategoryValue("");
-                                      }}>Cancel</Button>
-                                    </div>
+                                        toast({ title: 'Success', description: `Category updated to ${newName}` });
+                                      } catch (err) {
+                                        console.error('update category error', err);
+                                        toast({ title: 'Error', description: 'Failed to update category', variant: 'destructive' });
+                                      }
+                                    }}>Save</Button>
+                                    <Button size="sm" variant="ghost" onClick={() => {
+                                      setEditingCategory(null);
+                                      setEditingCategoryValue("");
+                                    }}>Cancel</Button>
                                   </div>
-                                )}
-                              </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })
@@ -1927,8 +2081,12 @@ export default function AdminDashboard() {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+          )}
 
-              {/* Create Subcategories Section */}
+          {/* === CREATE PRODUCT TAB - Subcategories Section === */}
+          {canViewCategories && (
+            <TabsContent value="create-product" className="space-y-6 mt-4">
               <Card className="border-green-200 bg-green-50">
                 <CardHeader>
                   <div className="flex items-center justify-between">
@@ -2010,6 +2168,7 @@ export default function AdminDashboard() {
                         </SelectTrigger>
                         <SelectContent className="max-h-64">
                           <SelectItem value="all">All Categories</SelectItem>
+                          <SelectItem value="uncategorized" className="text-destructive font-medium italic">Uncategorized</SelectItem>
                           {categories.map((cat: string) => (
                             <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                           ))}
@@ -2022,7 +2181,12 @@ export default function AdminDashboard() {
                       <p className="text-center text-muted-foreground py-6">No subcategories created yet</p>
                     ) : (
                       subCategories
-                        .filter(sub => (filterSubCategoryByCategory === "all" || sub.category === filterSubCategoryByCategory) && sub.name.toLowerCase().includes(searchSubCategories.toLowerCase()))
+                        .filter(sub => {
+                          const matchesSearch = sub.name.toLowerCase().includes(searchSubCategories.toLowerCase());
+                          const matchesCategory = filterSubCategoryByCategory === "all" ||
+                            (filterSubCategoryByCategory === "uncategorized" ? !sub.category : sub.category === filterSubCategoryByCategory);
+                          return matchesSearch && matchesCategory;
+                        })
                         .map((sub: any) => (
                           <div key={sub.id} className="p-4 border rounded-lg bg-white hover:border-green-400 transition">
                             <div className="flex items-center justify-between">
@@ -2044,33 +2208,7 @@ export default function AdminDashboard() {
                                   }}>
                                     Edit
                                   </Button>
-                                  <Button size="sm" variant="destructive" onClick={async () => {
-                                    try {
-                                      const impactRes = await apiFetch(`/subcategories/${sub.id}/impact`);
-                                      const impact = await impactRes.json();
-
-                                      let message = `Are you sure you want to delete subcategory "${sub.name}"?\n\n`;
-
-                                      if (impact.products?.length > 0) {
-                                        message += `The following ${impact.products.length} products will be deleted or orphaned:\n- ${impact.products.slice(0, 5).join(', ')}${impact.products.length > 5 ? '...' : ''}\n\n`;
-                                      }
-
-                                      message += "This action cannot be undone.";
-
-                                      if (!window.confirm(message)) return;
-
-                                      const res = await apiFetch(`/subcategories/${sub.id}`, { method: 'DELETE' });
-                                      if (res.ok) {
-                                        setSubCategories(prev => prev.filter(s => s.id !== sub.id));
-                                        toast({ title: 'Deleted', description: `Subcategory ${sub.name} removed` });
-                                      } else {
-                                        toast({ title: 'Error', description: 'Failed to delete subcategory', variant: 'destructive' });
-                                      }
-                                    } catch (err) {
-                                      console.error('delete subcategory error', err);
-                                      toast({ title: 'Error', description: 'Failed to delete subcategory', variant: 'destructive' });
-                                    }
-                                  }}>
+                                  <Button size="sm" variant="destructive" onClick={() => requestDeleteSubCategory(sub)}>
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
                                 </div>
@@ -2299,6 +2437,7 @@ export default function AdminDashboard() {
                         </SelectTrigger>
                         <SelectContent className="max-h-64">
                           <SelectItem value="all">All Categories</SelectItem>
+                          <SelectItem value="uncategorized" className="text-destructive font-medium italic">Uncategorized</SelectItem>
                           {categories.map((cat: string) => (
                             <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                           ))}
@@ -2315,8 +2454,9 @@ export default function AdminDashboard() {
                         </SelectTrigger>
                         <SelectContent className="max-h-64">
                           <SelectItem value="all">All Subcategories</SelectItem>
+                          <SelectItem value="uncategorized" className="text-destructive font-medium italic">Uncategorized</SelectItem>
                           {subCategories
-                            .filter(sub => filterProductByCategory === "all" || sub.category === filterProductByCategory)
+                            .filter(sub => filterProductByCategory === "all" || (filterProductByCategory === "uncategorized" ? !sub.category : sub.category === filterProductByCategory))
                             .map((sub: any) => (
                               <SelectItem key={sub.id} value={sub.name}>{sub.name}</SelectItem>
                             ))}
@@ -2331,11 +2471,21 @@ export default function AdminDashboard() {
                       products
                         .filter(prod => {
                           const matchesSearch = prod.name.toLowerCase().includes(searchProducts.toLowerCase());
-                          const matchesSubCategory = filterProductBySubCategory === "all" || prod.subcategory === filterProductBySubCategory;
 
-                          // To match by category, we need to find the category of the product's subcategory
+                          let matchesSubCategory = filterProductBySubCategory === "all";
+                          if (filterProductBySubCategory === "uncategorized") {
+                            matchesSubCategory = !prod.subcategory;
+                          } else if (filterProductBySubCategory !== "all") {
+                            matchesSubCategory = prod.subcategory === filterProductBySubCategory;
+                          }
+
                           const prodSub = subCategories.find(s => s.name === prod.subcategory);
-                          const matchesCategory = filterProductByCategory === "all" || (prodSub && prodSub.category === filterProductByCategory);
+                          let matchesCategory = filterProductByCategory === "all";
+                          if (filterProductByCategory === "uncategorized") {
+                            matchesCategory = !prod.subcategory || (prodSub && !prodSub.category);
+                          } else if (filterProductByCategory !== "all") {
+                            matchesCategory = !!(prodSub && prodSub.category === filterProductByCategory);
+                          }
 
                           return matchesSearch && matchesSubCategory && matchesCategory;
                         })
@@ -3541,7 +3691,89 @@ export default function AdminDashboard() {
           </TabsContent>
 
         </Tabs>
-      </div>
-    </Layout>
+        {/* DELETE CONFIRMATION MODAL */}
+        <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <AlertDialogContent className="max-w-md border-t-4 border-t-destructive">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+                <AlertTriangle className="h-5 w-5" />
+                Confirm Deletion
+              </AlertDialogTitle>
+              <AlertDialogDescription className="space-y-4 pt-2">
+                <div className="font-medium text-foreground">
+                  Are you sure you want to delete {deleteData?.type} <span className="underline italic text-primary">"{deleteData?.name}"</span>?
+                </div>
+
+                {deleteData?.type === 'category' && (
+                  <div className="space-y-3 bg-muted/30 p-4 rounded-lg border border-border">
+                    {deleteData.impact.subcategories && deleteData.impact.subcategories.filter(s => s && s.trim()).length > 0 && (
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">Impacted Subcategories ({deleteData.impact.subcategories.filter(s => s && s.trim()).length})</p>
+                        <div className="text-sm flex flex-wrap gap-1">
+                          {deleteData.impact.subcategories.filter(s => s && s.trim()).slice(0, 10).map((s, i) => (
+                            <Badge key={i} variant="outline" className="bg-white/50">{s}</Badge>
+                          ))}
+                          {deleteData.impact.subcategories.filter(s => s && s.trim()).length > 10 && <span className="text-xs text-muted-foreground pt-1">...and more</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {deleteData.impact.products && deleteData.impact.products.filter(p => p && p.trim()).length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">Impacted Products ({deleteData.impact.products.filter(p => p && p.trim()).length})</p>
+                        <div className="text-sm flex flex-wrap gap-1">
+                          {deleteData.impact.products.filter(p => p && p.trim()).slice(0, 10).map((p, i) => (
+                            <Badge key={i} variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-50 border-blue-100">{p}</Badge>
+                          ))}
+                          {deleteData.impact.products.filter(p => p && p.trim()).length > 10 && <span className="text-xs text-muted-foreground pt-1">...and more</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {(!deleteData.impact.subcategories?.filter(s => s && s.trim()).length && !deleteData.impact.products?.filter(p => p && p.trim()).length) && (
+                      <p className="text-xs text-muted-foreground italic">No linked items will be affected.</p>
+                    )}
+                  </div>
+                )}
+
+                {deleteData?.type === 'subcategory' && (
+                  <div className="space-y-3 bg-muted/30 p-4 rounded-lg border border-border">
+                    {deleteData.impact.products && deleteData.impact.products.filter(p => p && p.trim()).length > 0 && (
+                      <div>
+                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1">Impacted Products ({deleteData.impact.products.filter(p => p && p.trim()).length})</p>
+                        <div className="text-sm flex flex-wrap gap-1">
+                          {deleteData.impact.products.filter(p => p && p.trim()).slice(0, 10).map((p, i) => (
+                            <Badge key={i} variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-50 border-blue-100">{p}</Badge>
+                          ))}
+                          {deleteData.impact.products.filter(p => p && p.trim()).length > 10 && <span className="text-xs text-muted-foreground pt-1">...and more</span>}
+                        </div>
+                      </div>
+                    )}
+
+                    {(!deleteData.impact.products?.filter(p => p && p.trim()).length) && (
+                      <p className="text-xs text-muted-foreground italic">No linked items will be affected.</p>
+                    )}
+                  </div>
+                )}
+
+                <p className="text-sm font-semibold text-destructive/80">
+                  Warning: This action is permanent and cannot be undone.
+                </p>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="bg-muted/10 p-4 -mx-6 -mb-6 border-t mt-4 rounded-b-lg">
+              <AlertDialogCancel onClick={() => setDeleteConfirmOpen(false)}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmDeleteAction}
+                className="bg-destructive hover:bg-destructive/90 text-white shadow-lg shadow-destructive/20"
+              >
+                Delete {deleteData?.type}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+      </div >
+    </Layout >
   );
 }
