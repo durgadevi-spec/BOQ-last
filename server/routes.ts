@@ -49,6 +49,22 @@ export async function registerRoutes(
     );
   }
 
+  // One-time repair: link orphaned materials (template_id IS NULL) to matching templates
+  try {
+    const repairResult = await query(
+      `UPDATE materials m
+       SET template_id = t.id
+       FROM material_templates t
+       WHERE m.template_id IS NULL
+         AND (LOWER(m.name) = LOWER(t.name) OR m.code = t.code)`
+    );
+    if (repairResult.rowCount && repairResult.rowCount > 0) {
+      console.log(`[repair] Linked ${repairResult.rowCount} orphaned materials to their templates`);
+    }
+  } catch (err: unknown) {
+    console.warn("[repair] Could not link orphaned materials:", (err as any)?.message || err);
+  }
+
   // Ensure messages table exists (create if missing) to avoid runtime errors in dev
   try {
     await query(`
@@ -436,6 +452,27 @@ export async function registerRoutes(
   } catch (err: unknown) {
     console.warn(
       "[db] Could not migrate boq_items columns:",
+      (err as any)?.message || err,
+    );
+  }
+
+  // Ensure boq_history table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS boq_history (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        version_id VARCHAR(100) NOT NULL REFERENCES boq_versions(id) ON DELETE CASCADE,
+        user_id VARCHAR(36) NOT NULL,
+        user_full_name TEXT,
+        action TEXT NOT NULL, 
+        reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+    console.log("[db] boq_history table verified/created");
+  } catch (err: unknown) {
+    console.warn(
+      "[db] Could not create boq_history table:",
       (err as any)?.message || err,
     );
   }
@@ -1356,11 +1393,14 @@ export async function registerRoutes(
           `[POST /api/materials] extracted: name=${body.name}, shop_id=${shop_id}, technicalspecification=${technicalspecification}`,
         );
 
+        const template_id = body.template_id || body.templateId || null;
+
         const result = await query(
-          `INSERT INTO materials (id, name, code, rate, shop_id, unit, category, brandname, modelnumber, subcategory, product, technicalspecification, dimensions, finishtype, metaltype, image, attributes, master_material_id, approved, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, now()) RETURNING *`,
+          `INSERT INTO materials (id, template_id, name, code, rate, shop_id, unit, category, brandname, modelnumber, subcategory, product, technicalspecification, dimensions, finishtype, metaltype, image, attributes, master_material_id, approved, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20, now()) RETURNING *`,
           [
             id,
+            template_id,
             body.name || null,
             body.code || null,
             parseSafeNumeric(body.rate) || 0,
@@ -1600,12 +1640,17 @@ export async function registerRoutes(
         "finishtype",
         "metaltype",
         "image",
+        "template_id",
+        "templateId"
       ]) {
         if (body[k] !== undefined) {
           let val = body[k];
-          if (k === "shop_id" && val === "") val = null;
-          if (k === "rate") val = parseSafeNumeric(val);
-          fields.push(`${k} = $${idx++}`);
+          let dbFieldName = k;
+          if (k === "templateId") dbFieldName = "template_id";
+
+          if (dbFieldName === "shop_id" && val === "") val = null;
+          if (dbFieldName === "rate") val = parseSafeNumeric(val);
+          fields.push(`${dbFieldName} = $${idx++}`);
           vals.push(val);
         }
       }
@@ -1635,7 +1680,31 @@ export async function registerRoutes(
     async (req, res) => {
       try {
         const id = req.params.id;
+
+        // Look up the material first to find template_id and shop_id
+        const matResult = await query("SELECT template_id, shop_id, name, code FROM materials WHERE id = $1", [id]);
+        const mat = matResult.rows[0];
+
+        // Delete the material
         await query("DELETE FROM materials WHERE id = $1", [id]);
+
+        // Also clean up matching material_submissions so stale data doesn't resurface
+        if (mat) {
+          if (mat.template_id && mat.shop_id) {
+            await query(
+              "DELETE FROM material_submissions WHERE template_id = $1 AND shop_id = $2",
+              [mat.template_id, mat.shop_id]
+            );
+          }
+          // Also try to clean up by name/code match if template_id was null
+          if (!mat.template_id && mat.shop_id && (mat.name || mat.code)) {
+            await query(
+              "DELETE FROM material_submissions WHERE shop_id = $1 AND (name = $2 OR code = $3)",
+              [mat.shop_id, mat.name, mat.code]
+            );
+          }
+        }
+
         res.json({ message: "deleted" });
       } catch (err) {
         console.error(err);
@@ -1969,10 +2038,91 @@ export async function registerRoutes(
           return;
         }
 
+        // Cascade name/code/category/subcategory changes to linked materials
+        const updated = result.rows[0];
+        try {
+          const cascadeFields: string[] = [];
+          const cascadeVals: any[] = [];
+          let ci = 1;
+
+          if (updated.name) { cascadeFields.push(`name = $${ci++}`); cascadeVals.push(updated.name); }
+          if (updated.code) { cascadeFields.push(`code = $${ci++}`); cascadeVals.push(updated.code); }
+          if (updated.category !== undefined) { cascadeFields.push(`category = $${ci++}`); cascadeVals.push(updated.category); }
+          if (updated.subcategory !== undefined) { cascadeFields.push(`subcategory = $${ci++}`); cascadeVals.push(updated.subcategory); }
+
+          if (cascadeFields.length > 0) {
+            cascadeVals.push(id);
+            const cascadeQ = `UPDATE materials SET ${cascadeFields.join(", ")} WHERE template_id = $${ci}`;
+            const cascadeRes = await query(cascadeQ, cascadeVals);
+            console.log(`[material-templates PUT] Cascaded updates to ${cascadeRes.rowCount} linked materials`);
+          }
+        } catch (cascadeErr) {
+          console.warn("[material-templates PUT] Cascade to materials failed (non-fatal):", cascadeErr);
+        }
+
         res.json({ template: result.rows[0] });
       } catch (err) {
         console.error("/api/material-templates PUT error", err);
         res.status(500).json({ message: "failed to update material template" });
+      }
+    },
+  );
+
+  // GET /api/material-templates/:id/impact - Get impact info before deleting a template
+  app.get(
+    "/api/material-templates/:id/impact",
+    async (req: Request, res: Response) => {
+      try {
+        const id = req.params.id;
+
+        // Get template details
+        const tplRes = await query("SELECT name, code FROM material_templates WHERE id = $1", [id]);
+        if (tplRes.rows.length === 0) {
+          res.status(404).json({ message: "Template not found" });
+          return;
+        }
+        const tpl = tplRes.rows[0];
+
+        // Get linked materials (by template_id)
+        const linkedMats = await query(
+          `SELECT m.id, m.name, m.code, m.rate, m.unit, m.shop_id, s.name as shop_name
+           FROM materials m
+           LEFT JOIN shops s ON m.shop_id = s.id
+           WHERE m.template_id = $1
+           ORDER BY s.name, m.name`,
+          [id],
+        );
+
+        // Get orphaned materials (template_id IS NULL but matching name/code)
+        const orphanMats = await query(
+          `SELECT m.id, m.name, m.code, m.rate, m.unit, m.shop_id, s.name as shop_name
+           FROM materials m
+           LEFT JOIN shops s ON m.shop_id = s.id
+           WHERE m.template_id IS NULL AND (m.name = $1 OR m.code = $2)
+           ORDER BY s.name, m.name`,
+          [tpl.name, tpl.code],
+        );
+
+        // Get material submissions
+        const subs = await query(
+          `SELECT ms.id, ms.rate, ms.unit, ms.shop_id, s.name as shop_name
+           FROM material_submissions ms
+           LEFT JOIN shops s ON ms.shop_id = s.id
+           WHERE ms.template_id = $1
+           ORDER BY s.name`,
+          [id],
+        );
+
+        res.json({
+          template: tpl,
+          linkedMaterials: linkedMats.rows,
+          orphanedMaterials: orphanMats.rows,
+          submissions: subs.rows,
+          totalAffected: linkedMats.rows.length + orphanMats.rows.length + subs.rows.length,
+        });
+      } catch (err) {
+        console.error("/api/material-templates/:id/impact error", err);
+        res.status(500).json({ message: "Failed to fetch impact" });
       }
     },
   );
@@ -2023,6 +2173,20 @@ export async function registerRoutes(
             "[DELETE] Deleted material_submissions:",
             subsRes.rowCount,
           );
+
+          // Before deleting the template, identify any orphaned materials 
+          // (template_id is null) that match this template's name/code
+          const templateResult = await query("SELECT name, code FROM material_templates WHERE id = $1", [id]);
+          const tpl = templateResult.rows[0];
+
+          if (tpl) {
+            console.log("[DELETE] Cleaning up orphaned materials for:", tpl.name, tpl.code);
+            const orphanRes = await query(
+              "DELETE FROM materials WHERE template_id IS NULL AND (name = $1 OR code = $2)",
+              [tpl.name, tpl.code]
+            );
+            console.log("[DELETE] Deleted orphaned materials:", orphanRes.rowCount);
+          }
 
           // Also delete any materials that reference this template
           console.log("[DELETE] Deleting materials with template_id =", id);
@@ -2386,7 +2550,7 @@ export async function registerRoutes(
   app.post(
     "/api/categories",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { name } = req.body;
@@ -2424,7 +2588,7 @@ export async function registerRoutes(
   app.post(
     "/api/subcategories",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { name, category } = req.body;
@@ -2466,7 +2630,7 @@ export async function registerRoutes(
   app.put(
     "/api/categories/:name",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { name: oldName } = req.params;
@@ -2510,7 +2674,7 @@ export async function registerRoutes(
   app.put(
     "/api/subcategories/:id",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
@@ -2548,7 +2712,7 @@ export async function registerRoutes(
   app.get(
     "/api/categories/:name/impact",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const name = decodeURIComponent(req.params.name);
@@ -2577,7 +2741,7 @@ export async function registerRoutes(
   app.get(
     "/api/subcategories/:id/impact",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
@@ -2607,14 +2771,31 @@ export async function registerRoutes(
   app.delete(
     "/api/subcategories/:id",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const id = req.params.id;
 
-        // Simply delete the subcategory
-        // Note: CASCADE DELETE should be handled at the database level
-        // OR we trust that products are orphaned (which is acceptable for now)
+        // Find subcategory name first to update materials/templates
+        const subResult = await query("SELECT name FROM material_subcategories WHERE id = $1", [id]);
+        if (subResult.rows.length === 0) {
+          return res.status(404).json({ message: "Subcategory not found" });
+        }
+        const subName = subResult.rows[0].name;
+
+        // Update materials to be uncategorized for this subcategory
+        await query(
+          "UPDATE materials SET \"subCategory\" = NULL WHERE \"subCategory\" = $1",
+          [subName]
+        );
+
+        // Update material templates
+        await query(
+          "UPDATE material_templates SET subcategory = NULL WHERE subcategory = $1",
+          [subName]
+        );
+
+        // Simply delete the subcategory record from lookup table
         const result = await query(
           "DELETE FROM material_subcategories WHERE id = $1 RETURNING id",
           [id],
@@ -2625,7 +2806,7 @@ export async function registerRoutes(
           return;
         }
 
-        res.json({ message: "Subcategory deleted successfully" });
+        res.json({ message: "Subcategory deleted successfully (materials uncategorized)" });
       } catch (err: any) {
         console.error("/api/subcategories DELETE error:", {
           message: err.message,
@@ -2659,7 +2840,7 @@ export async function registerRoutes(
   app.delete(
     "/api/categories/:name",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const name = req.params.name;
@@ -2667,38 +2848,38 @@ export async function registerRoutes(
         if (!name)
           return res.status(400).json({ message: "category name required" });
 
-        // Delete materials that reference templates in this category
-        console.log("Deleting materials for category:", name);
-        const materialsResult = await query(
-          "DELETE FROM materials WHERE template_id IN (SELECT id FROM material_templates WHERE category = $1)",
+        // Update materials to be uncategorized for this category
+        console.log("Uncategorizing materials for category:", name);
+        const materialsUpdateResult = await query(
+          "UPDATE materials SET category = NULL WHERE category = $1",
           [name],
         );
-        console.log("Deleted materials:", materialsResult.rowCount);
+        console.log("Updated materials (uncategorized):", materialsUpdateResult.rowCount);
 
-        // Delete material_templates that reference this category
-        console.log("Deleting material templates for category:", name);
-        const templatesResult = await query(
-          "DELETE FROM material_templates WHERE category = $1",
+        // Update material_templates to be uncategorized for this category
+        console.log("Uncategorizing material templates for category:", name);
+        const templatesUpdateResult = await query(
+          "UPDATE material_templates SET category = NULL WHERE category = $1",
           [name],
         );
-        console.log("Deleted templates:", templatesResult.rowCount);
+        console.log("Updated templates (uncategorized):", templatesUpdateResult.rowCount);
 
-        // Delete subcategories for this category
-        console.log("Deleting subcategories for category:", name);
+        // Delete subcategories for this category (Lookup table entries)
+        console.log("Deleting subcategories records for category:", name);
         const subcatsResult = await query(
           "DELETE FROM material_subcategories WHERE category = $1",
           [name],
         );
-        console.log("Deleted subcategories:", subcatsResult.rowCount);
+        console.log("Deleted subcategories records:", subcatsResult.rowCount);
 
-        // Delete the category itself
-        console.log("Deleting category:", name);
+        // Delete the category record itself
+        console.log("Deleting category record:", name);
         const result = await query(
           "DELETE FROM material_categories WHERE name = $1 RETURNING *",
           [name],
         );
         console.log(
-          "Deleted category result:",
+          "Deleted category record result:",
           result.rowCount,
           result.rows[0],
         );
@@ -2707,7 +2888,7 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Category not found" });
         }
 
-        res.json({ message: "Category deleted", category: result.rows[0] });
+        res.json({ message: "Category deleted (materials and templates uncategorized)", category: result.rows[0] });
       } catch (err) {
         console.error("/api/categories/:name DELETE error", err);
         res.status(500).json({ message: "failed to delete category" });
@@ -2791,7 +2972,7 @@ export async function registerRoutes(
   app.post(
     "/api/products",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { name, subcategory, taxCodeType, taxCodeValue, hsn_code, sac_code } = req.body;
@@ -2855,7 +3036,7 @@ export async function registerRoutes(
   app.put(
     "/api/products/:id",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
@@ -2910,7 +3091,7 @@ export async function registerRoutes(
   app.delete(
     "/api/products/:id",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team", "pre_sales"),
+    requireRole("admin", "software_team", "purchase_team", "pre_sales", "product_manager"),
     async (req: Request, res: Response) => {
       try {
         const { id } = req.params;
@@ -3695,12 +3876,46 @@ export async function registerRoutes(
         }
 
         console.log(`Successfully finished saving edits. Total BOQ items updated: ${totalItemsUpdated}`);
+
+        // Log edit in history
+        if (totalItemsUpdated > 0) {
+          try {
+            const user = (req as any).user;
+            await query(
+              `INSERT INTO boq_history (version_id, user_id, user_full_name, action, created_at)
+               VALUES ($1, $2, $3, 'edited', NOW())`,
+              [versionId, user?.id, user?.fullName || user?.username]
+            );
+          } catch (hErr) {
+            console.warn("Failed to log edit history:", hErr);
+          }
+        }
+
         res.json({ message: "Edits saved successfully", updatedItems: updatedRows });
       } catch (err) {
         console.error("POST /api/boq-versions/:versionId/save-edits error", err);
         res.status(500).json({ message: "Failed to save edits" });
       }
     },
+  );
+
+  // GET /api/boq-versions/:versionId/history - Fetch history for a version
+  app.get(
+    "/api/boq-versions/:versionId/history",
+    authMiddleware,
+    async (req: Request, res: Response) => {
+      try {
+        const { versionId } = req.params;
+        const result = await query(
+          "SELECT * FROM boq_history WHERE version_id = $1 ORDER BY created_at DESC",
+          [versionId]
+        );
+        res.json({ history: result.rows });
+      } catch (err) {
+        console.error("GET /api/boq-versions/:versionId/history error", err);
+        res.status(500).json({ message: "Failed to fetch history" });
+      }
+    }
   );
 
   // PUT /api/boq-versions/:versionId - Update version status (lock/submit)
@@ -3736,6 +3951,18 @@ export async function registerRoutes(
             `UPDATE boq_versions SET status = $1, updated_at = NOW() WHERE id = $2`,
             [status, versionId],
           );
+
+          // Log status change in history
+          try {
+            const user = (req as any).user;
+            await query(
+              `INSERT INTO boq_history (version_id, user_id, user_full_name, action, created_at)
+               VALUES ($1, $2, $3, $4, NOW())`,
+              [versionId, user?.id, user?.fullName || user?.username, status]
+            );
+          } catch (hErr) {
+            console.warn("Failed to log status history:", hErr);
+          }
         }
 
         res.json({ message: "Version updated" });
@@ -3752,7 +3979,7 @@ export async function registerRoutes(
   app.get(
     "/api/bom-approvals",
     authMiddleware,
-    requireRole("admin", "software_team"),
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (_req: Request, res: Response) => {
       try {
         const result = await query(
@@ -3778,6 +4005,18 @@ export async function registerRoutes(
           "UPDATE boq_versions SET status = 'approved', updated_at = NOW() WHERE id = $1",
           [id]
         );
+
+        // Log approval in history
+        try {
+          const user = (req as any).user;
+          await query(
+            `INSERT INTO boq_history (version_id, user_id, user_full_name, action, created_at)
+             VALUES ($1, $2, $3, 'approved', NOW())`,
+            [id, user?.id, user?.fullName || user?.username]
+          );
+        } catch (hErr) {
+          console.warn("Failed to log approval history:", hErr);
+        }
         res.json({ message: "BOM version approved successfully" });
       } catch (err) {
         console.error("POST /api/bom-approvals/:id/approve error:", err);
@@ -3799,6 +4038,18 @@ export async function registerRoutes(
           "UPDATE boq_versions SET status = 'rejected', rejection_reason = $1, updated_at = NOW() WHERE id = $2",
           [reason, id]
         );
+
+        // Log rejection in history
+        try {
+          const user = (req as any).user;
+          await query(
+            `INSERT INTO boq_history (version_id, user_id, user_full_name, action, reason, created_at)
+             VALUES ($1, $2, $3, 'rejected', $4, NOW())`,
+            [id, user?.id, user?.fullName || user?.username, reason]
+          );
+        } catch (hErr) {
+          console.warn("Failed to log rejection history:", hErr);
+        }
         res.json({ message: "BOM version rejected successfully" });
       } catch (err) {
         console.error("POST /api/bom-approvals/:id/reject error:", err);
@@ -4736,7 +4987,7 @@ export async function registerRoutes(
   app.post(
     "/api/step11-products",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team"),
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (req: Request, res: Response) => {
       console.log("[POST /api/step11-products] body:", JSON.stringify(req.body).slice(0, 200) + "...");
       try {
@@ -4815,11 +5066,12 @@ export async function registerRoutes(
               // ensure column exists
               await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS apply_wastage BOOLEAN DEFAULT TRUE");
               await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS shop_name VARCHAR(255)");
+              await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS base_qty DECIMAL(10,4)");
 
               await query(
                 `INSERT INTO step11_product_items 
-                 (step11_product_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, apply_wastage, shop_name)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                 (step11_product_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, apply_wastage, shop_name, base_qty)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
                 [
                   step11ProductId,
                   item.materialId,
@@ -4832,7 +5084,8 @@ export async function registerRoutes(
                   item.location,
                   item.amount,
                   item.applyWastage !== undefined ? item.applyWastage : true,
-                  item.shopName || item.shop_name || null
+                  item.shopName || item.shop_name || null,
+                  item.baseQty ?? item.qty
                 ],
               );
             }
@@ -4859,7 +5112,7 @@ export async function registerRoutes(
   app.post(
     "/api/product-step3-config",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team"),
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (req: Request, res: Response) => {
       try {
         const {
@@ -5145,13 +5398,21 @@ export async function registerRoutes(
   app.delete(
     "/api/step11-products/config/:id",
     authMiddleware,
-    requireRole("admin", "software_team", "purchase_team"),
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (req: Request, res: Response) => {
       const { id } = req.params;
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
       try {
         await query("BEGIN");
-        // items are deleted automatically due to ON DELETE CASCADE
-        const result = await query("DELETE FROM step11_products WHERE id = $1", [id]);
+        let result;
+        if (isUuid) {
+          // Permanent Step 11 configuration
+          result = await query("DELETE FROM step11_products WHERE id = $1", [id]);
+        } else {
+          // Step 3 Draft configuration (ID is integer)
+          result = await query("DELETE FROM product_step3_config WHERE id = $1", [id]);
+        }
         await query("COMMIT");
 
         if (result.rowCount === 0) {
@@ -5201,11 +5462,14 @@ export async function registerRoutes(
   });
 
   // ==================== PRODUCT APPROVAL ROUTES ====================
+  // Ensure product_approvals has rejection_reason column
+  query("ALTER TABLE product_approvals ADD COLUMN IF NOT EXISTS rejection_reason TEXT").catch(() => { });
 
   // POST /api/product-approvals - Submit for approval
   app.post(
     "/api/product-approvals",
     authMiddleware,
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (req: Request, res: Response) => {
       try {
         const {
@@ -5271,7 +5535,7 @@ export async function registerRoutes(
   app.get(
     "/api/product-approvals",
     authMiddleware,
-    requireRole("admin", "software_team"),
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (_req: Request, res: Response) => {
       try {
         const result = await query(
@@ -5289,7 +5553,7 @@ export async function registerRoutes(
   app.get(
     "/api/product-approvals/:id",
     authMiddleware,
-    requireRole("admin", "software_team"),
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (req: Request, res: Response) => {
       try {
         const approvalResult = await query("SELECT * FROM product_approvals WHERE id = $1", [req.params.id]);
@@ -5438,15 +5702,16 @@ export async function registerRoutes(
     requireRole("admin", "software_team"),
     async (req: Request, res: Response) => {
       try {
+        const { rejection_reason } = req.body;
         const result = await query(
-          "UPDATE product_approvals SET status = 'rejected', updated_at = NOW() WHERE id = $1 AND status = 'pending' RETURNING id",
-          [req.params.id]
+          "UPDATE product_approvals SET status = 'rejected', rejection_reason = $1, updated_at = NOW() WHERE id = $2 AND status = 'pending' RETURNING id",
+          [rejection_reason || null, req.params.id]
         );
         if (result.rows.length === 0) {
           res.status(404).json({ message: "Pending approval not found" });
           return;
         }
-        res.json({ message: "Product configuration rejected" });
+        res.json({ message: "Product configuration rejected", rejection_reason });
       } catch (err) {
         console.error("POST /api/product-approvals/:id/reject error:", err);
         res.status(500).json({ message: "Failed to reject request" });

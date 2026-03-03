@@ -21,16 +21,22 @@ export default function ManageCategories() {
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
 
   const [categories, setCategories] = useState<string[]>([]);
-  const [subcategories, setSubcategories] = useState<string[]>([]);
-  const [category, setCategory] = useState<string>("");
-  const [subcategory, setSubcategory] = useState<string>("");
+
+  // Filtering UI state
+  const [filterCategory, setFilterCategory] = useState<string>("all-categories");
+  const [filterSubcategory, setFilterSubcategory] = useState<string>("all-subcategories");
+  const [filterSubcategories, setFilterSubcategories] = useState<string[]>([]);
+
+  // Assignment UI state
+  const [assignCategory, setAssignCategory] = useState<string>("");
+  const [assignSubcategory, setAssignSubcategory] = useState<string>("");
+  const [assignSubcategories, setAssignSubcategories] = useState<string[]>([]);
 
   useEffect(() => {
     (async () => {
       try {
         const data = await getJSON("/api/materials");
         setMaterials(data.materials || []);
-        setFiltered(data.materials || []);
       } catch (e) {
         console.error("Failed to load materials", e);
       }
@@ -46,31 +52,91 @@ export default function ManageCategories() {
     })();
   }, []);
 
+  // Handle Filtering
   useEffect(() => {
-    setFiltered(
-      materials.filter((m) =>
-        (m.name || "").toLowerCase().includes(search.toLowerCase()) ||
-        (m.code || "").toLowerCase().includes(search.toLowerCase()),
-      ),
-    );
-  }, [search, materials]);
+    let filteredList = materials;
 
+    // Search filter
+    if (search) {
+      const q = search.toLowerCase();
+      filteredList = filteredList.filter((m) =>
+        (m.name || "").toLowerCase().includes(q) ||
+        (m.code || "").toLowerCase().includes(q)
+      );
+    }
+
+    // Category filter
+    if (filterCategory && filterCategory !== "all-categories") {
+      filteredList = filteredList.filter(m => {
+        if (filterCategory === "uncategorized") return !m.category;
+        const cats = (m.category || "").split(",").map((s: string) => s.trim().toLowerCase());
+        return cats.includes(filterCategory.toLowerCase());
+      });
+    }
+
+    // Subcategory filter
+    if (filterSubcategory && filterSubcategory !== "all-subcategories") {
+      filteredList = filteredList.filter(m => {
+        const currentSub = m.subcategory || m.subCategory || "";
+        if (filterSubcategory === "uncategorized") return !currentSub;
+        const subs = currentSub.split(",").map((s: string) => s.trim().toLowerCase());
+        return subs.includes(filterSubcategory.toLowerCase());
+      });
+    }
+
+    setFiltered(filteredList);
+  }, [search, materials, filterCategory, filterSubcategory]);
+
+  // Load subcategories for FILTER
   useEffect(() => {
-    if (!category) return setSubcategories([]);
+    if (!filterCategory || filterCategory === "all-categories" || filterCategory === "uncategorized") {
+      setFilterSubcategories([]);
+      setFilterSubcategory("all-subcategories");
+      return;
+    }
     (async () => {
       try {
-        const res = await getJSON(`/api/material-subcategories/${encodeURIComponent(category)}`);
-        setSubcategories(res.subcategories || []);
+        const res = await getJSON(`/api/material-subcategories/${encodeURIComponent(filterCategory)}`);
+        setFilterSubcategories(res.subcategories || []);
       } catch (e) {
-        console.error("Failed to load subcategories", e);
-        setSubcategories([]);
+        console.error("Failed to load filter subcategories", e);
+        setFilterSubcategories([]);
       }
     })();
-  }, [category]);
+  }, [filterCategory]);
+
+  // Load subcategories for ASSIGNMENT
+  useEffect(() => {
+    if (!assignCategory || assignCategory === "uncategorized") {
+      setAssignSubcategories([]);
+      setAssignSubcategory("");
+      return;
+    }
+    (async () => {
+      try {
+        const res = await getJSON(`/api/material-subcategories/${encodeURIComponent(assignCategory)}`);
+        setAssignSubcategories(res.subcategories || []);
+      } catch (e) {
+        console.error("Failed to load assign subcategories", e);
+        setAssignSubcategories([]);
+      }
+    })();
+  }, [assignCategory]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((s) => ({ ...s, [id]: !s[id] }));
   };
+
+  const toggleSelectAll = (checked: boolean) => {
+    const newSelected: Record<string, boolean> = {};
+    if (checked) {
+      filtered.forEach(m => {
+        newSelected[m.id] = true;
+      });
+    }
+    setSelectedIds(newSelected);
+  };
+
   const [conflictQueue, setConflictQueue] = useState<any[]>([]);
   const [conflictIndex, setConflictIndex] = useState(0);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -82,8 +148,8 @@ export default function ManageCategories() {
       alert("Select at least one material");
       return;
     }
-    if (!category) {
-      alert("Select a category first");
+    if (!assignCategory) {
+      alert("Select a category to assign first");
       return;
     }
 
@@ -92,22 +158,27 @@ export default function ManageCategories() {
     const immediate: string[] = [];
     const conflicts: any[] = [];
 
+    const targetCat = assignCategory === "uncategorized" ? "" : assignCategory;
+    const targetSub = assignSubcategory === "uncategorized" || !assignSubcategory ? "" : assignSubcategory;
+
     for (const id of ids) {
       const mat = materials.find((m) => m.id === id);
       if (!mat) continue;
       const existingCat = mat.category || "";
       const existingSub = mat.subcategory || mat.subCategory || "";
-      if (existingCat) {
-        conflicts.push({ id, mat, existingCat, existingSub });
-      } else {
+
+      // If we are resetting to uncategorized, go immediate
+      if (!targetCat || !existingCat) {
         immediate.push(id);
+      } else {
+        conflicts.push({ id, mat, existingCat, existingSub });
       }
     }
 
     // Update immediate ones in parallel
     await Promise.all(immediate.map(async (id) => {
       try {
-        await putJSON(`/api/materials/${id}`, { category, subcategory: subcategory || "" });
+        await putJSON(`/api/materials/${id}`, { category: targetCat, subcategory: targetSub });
       } catch (e) {
         console.error(`Failed to update material ${id}`, e);
       }
@@ -117,19 +188,20 @@ export default function ManageCategories() {
       setConflictQueue(conflicts);
       setConflictIndex(0);
       setDialogOpen(true);
-      // conflict processing will continue via dialog handlers
     } else {
-      // done
-      setInProgress(false);
-      alert("Category assignment completed");
-      try {
-        const data = await getJSON("/api/materials");
-        setMaterials(data.materials || []);
-        setFiltered(data.materials || []);
-        setSelectedIds({});
-      } catch (e) {
-        console.error("Failed to reload materials", e);
-      }
+      finishAssignment();
+    }
+  };
+
+  const finishAssignment = async () => {
+    setInProgress(false);
+    alert("Category assignment completed");
+    try {
+      const data = await getJSON("/api/materials");
+      setMaterials(data.materials || []);
+      setSelectedIds({});
+    } catch (e) {
+      console.error("Failed to reload materials", e);
     }
   };
 
@@ -138,7 +210,6 @@ export default function ManageCategories() {
     if (!item) return;
 
     if (choice === "cancel") {
-      // abort processing remaining conflicts
       setDialogOpen(false);
       setConflictQueue([]);
       setConflictIndex(0);
@@ -147,11 +218,11 @@ export default function ManageCategories() {
     }
 
     const { id, mat, existingCat, existingSub } = item;
-    let finalCat = category;
-    let finalSub = subcategory || "";
+    let finalCat = assignCategory === "uncategorized" ? "" : assignCategory;
+    let finalSub = assignSubcategory === "uncategorized" || !assignSubcategory ? "" : assignSubcategory;
 
-    if (choice === "append") {
-      const mergedCats = Array.from(new Set((existingCat + "," + category).split(',').map((s: string) => s.trim()).filter(Boolean)));
+    if (choice === "append" && finalCat) {
+      const mergedCats = Array.from(new Set((existingCat + "," + finalCat).split(',').map((s: string) => s.trim()).filter(Boolean)));
       finalCat = mergedCats.join(",");
 
       if (finalSub && existingSub) {
@@ -160,8 +231,6 @@ export default function ManageCategories() {
       } else if (!finalSub) {
         finalSub = existingSub;
       }
-    } else if (choice === "replace") {
-      finalSub = subcategory || "";
     }
 
     try {
@@ -172,100 +241,212 @@ export default function ManageCategories() {
 
     const next = conflictIndex + 1;
     if (next >= conflictQueue.length) {
-      // finished
       setDialogOpen(false);
       setConflictQueue([]);
       setConflictIndex(0);
-      setInProgress(false);
-      alert("Category assignment completed");
-      try {
-        const data = await getJSON("/api/materials");
-        setMaterials(data.materials || []);
-        setFiltered(data.materials || []);
-        setSelectedIds({});
-      } catch (e) {
-        console.error("Failed to reload materials", e);
-      }
+      finishAssignment();
     } else {
       setConflictIndex(next);
     }
   };
 
+  const selectedCount = Object.values(selectedIds).filter(Boolean).length;
+
   return (
     <Layout>
-      <div className="max-w-5xl mx-auto">
-        <h2 className="text-2xl font-semibold mb-4">Manage Categories</h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <Input placeholder="Search materials by name or code" value={search} onChange={(e: any) => setSearch(e.target.value)} />
-          <Select value={category} onValueChange={(v: string) => setCategory(v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select Category" />
-            </SelectTrigger>
-            <SelectContent>
-              {categories.map((c) => (
-                <SelectItem key={c} value={c}>{c}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Select value={subcategory} onValueChange={(v: string) => setSubcategory(v)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select Subcategory" />
-            </SelectTrigger>
-            <SelectContent>
-              {subcategories.map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className="max-w-6xl mx-auto space-y-6 pb-20">
+        <div className="flex items-center justify-between">
+          <h2 className="text-3xl font-bold tracking-tight">Manage Material Categories</h2>
         </div>
 
-        <div className="border rounded-md p-2 max-h-[520px] overflow-y-auto">
-          {filtered.length === 0 ? (
-            <div className="p-4 text-muted-foreground">No approved materials found</div>
-          ) : (
-            filtered.map((m) => (
-              <div key={m.id} className="flex items-center justify-between p-2 border-b">
-                <div className="flex items-center gap-3">
-                  <Checkbox checked={!!selectedIds[m.id]} onCheckedChange={() => toggleSelect(m.id)} />
-                  <div>
-                    <div className="font-medium text-foreground">{m.name || m.code}</div>
-                    <div className="text-xs text-muted-foreground">Code: {m.code} • Category: {m.category || "-"} • Subcategory: {m.subcategory || m.subCategory || "-"}</div>
-                  </div>
+        {/* Top Section: Filters and Search */}
+        <div className="bg-card border rounded-xl p-5 shadow-sm space-y-4">
+          <div className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+            <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+            Filter Materials
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="md:col-span-2">
+              <Input
+                placeholder="Search by name or item code..."
+                value={search}
+                onChange={(e: any) => setSearch(e.target.value)}
+                className="bg-muted/30 border-muted-foreground/20"
+              />
+            </div>
+
+            <Select value={filterCategory} onValueChange={setFilterCategory}>
+              <SelectTrigger className="bg-muted/30 border-muted-foreground/20">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                <SelectItem value="all-categories">All Categories</SelectItem>
+                <SelectItem value="uncategorized" className="font-semibold text-amber-600">Uncategorized</SelectItem>
+                {categories.map((c) => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={filterSubcategory} onValueChange={setFilterSubcategory} disabled={filterCategory === "all-categories"}>
+              <SelectTrigger className="bg-muted/30 border-muted-foreground/20">
+                <SelectValue placeholder="All Subcategories" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                <SelectItem value="all-subcategories">All Subcategories</SelectItem>
+                <SelectItem value="uncategorized" className="font-semibold text-amber-600">Uncategorized</SelectItem>
+                {filterSubcategories.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left/Main Column: Material List */}
+          <div className="lg:col-span-2 space-y-4">
+            <div className="flex items-center justify-between px-2">
+              <div className="flex items-center gap-4 text-sm font-medium">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="select-all"
+                    checked={filtered.length > 0 && selectedCount === filtered.length}
+                    onCheckedChange={(checked) => toggleSelectAll(checked as boolean)}
+                  />
+                  <label htmlFor="select-all" className="cursor-pointer">Select All Visible</label>
                 </div>
-                <div className="text-sm text-muted-foreground">{m.rate ? `Rate: ${m.rate}` : ""}</div>
+                <span className="text-muted-foreground font-normal">
+                  Showing {filtered.length} material{filtered.length === 1 ? "" : "s"}
+                </span>
               </div>
-            ))
-          )}
-        </div>
+              {selectedCount > 0 && (
+                <div className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">
+                  {selectedCount} Selected
+                </div>
+              )}
+            </div>
 
-        <div className="mt-4">
-          <Button onClick={assignCategories} className="mr-2">Assign Categories</Button>
-        </div>
-        {/* Conflict resolution dialog */}
-        <Dialog open={dialogOpen} onOpenChange={(o) => setDialogOpen(o)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Category Conflict</DialogTitle>
-              <DialogDescription>
-                {/* show details for current conflict */}
-                {conflictQueue[conflictIndex] ? (
-                  <div className="text-sm">
-                    Material "{conflictQueue[conflictIndex].mat.name || conflictQueue[conflictIndex].mat.code}" already has Category: "{conflictQueue[conflictIndex].existingCat}" and Subcategory: "{conflictQueue[conflictIndex].existingSub}".
-                    <div className="mt-2">Choose <strong>Append</strong> to merge new selection with existing values, or <strong>Replace</strong> to overwrite.</div>
+            <div className="border rounded-xl bg-card overflow-hidden shadow-sm min-h-[400px]">
+              <div className="max-h-[600px] overflow-y-auto divide-y divide-border/50">
+                {filtered.length === 0 ? (
+                  <div className="p-20 text-center text-muted-foreground flex flex-col items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9.172 9.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    </div>
+                    <div>No materials matching your criteria</div>
                   </div>
                 ) : (
-                  <div>No conflicts</div>
+                  filtered.map((m) => (
+                    <div key={m.id} className={`flex items-start gap-4 p-4 hover:bg-muted/30 transition-colors ${selectedIds[m.id] ? 'bg-blue-50/30' : ''}`}>
+                      <div className="pt-1">
+                        <Checkbox checked={!!selectedIds[m.id]} onCheckedChange={() => toggleSelect(m.id)} />
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-foreground">{m.name || m.code}</span>
+                          <span className="text-xs font-mono bg-muted/60 px-2 py-0.5 rounded text-muted-foreground">{m.code}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <div className={`text-[11px] px-2 py-0.5 rounded-full border ${m.category ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-amber-50 text-amber-600 border-amber-100 font-medium'}`}>
+                            Category: <span className="font-semibold">{m.category || "None"}</span>
+                          </div>
+                          <div className={`text-[11px] px-2 py-0.5 rounded-full border ${m.subcategory || m.subCategory ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-amber-50 text-amber-600 border-amber-100 font-medium'}`}>
+                            Sub: {m.subcategory || m.subCategory || "None"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column: Assignment Controls */}
+          <div className="space-y-4">
+            <div className="bg-card border rounded-xl p-5 shadow-sm sticky top-24 space-y-4">
+              <div className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                Assign Category
+              </div>
+
+              <div className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-muted-foreground px-1">Target Category</label>
+                  <Select value={assignCategory} onValueChange={setAssignCategory}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select Category" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      <SelectItem value="uncategorized" className="font-semibold text-amber-600">Uncategorized (Clear)</SelectItem>
+                      {categories.map((c) => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-muted-foreground px-1">Target Subcategory</label>
+                  <Select value={assignSubcategory} onValueChange={setAssignSubcategory} disabled={!assignCategory || assignCategory === "uncategorized"}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select Subcategory" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      <SelectItem value="uncategorized" className="font-semibold text-amber-600">Uncategorized (Clear)</SelectItem>
+                      {assignSubcategories.map((s) => (
+                        <SelectItem key={s} value={s}>{s}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="pt-4">
+                  <Button
+                    onClick={assignCategories}
+                    className="w-full bg-blue-600 hover:bg-blue-700 shadow-sm py-6 text-base font-semibold transition-all hover:translate-y-[-1px] active:translate-y-[0px]"
+                    disabled={selectedCount === 0 || inProgress}
+                  >
+                    {inProgress ? "Processing..." : `Assign to ${selectedCount} Item${selectedCount === 1 ? "" : "s"}`}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Conflict resolution dialog */}
+        <Dialog open={dialogOpen} onOpenChange={(o) => setDialogOpen(o)}>
+          <DialogContent className="max-w-md rounded-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                Resolve Assignment Conflict
+              </DialogTitle>
+              <DialogDescription className="pt-2">
+                {conflictQueue[conflictIndex] ? (
+                  <div className="space-y-4">
+                    <div className="p-3 bg-muted/40 rounded-lg border text-sm">
+                      <div className="font-semibold mb-1">Item Details:</div>
+                      <div className="text-foreground">{conflictQueue[conflictIndex].mat.name || conflictQueue[conflictIndex].mat.code}</div>
+                    </div>
+
+                    <div className="text-sm">
+                      This item already belongs to:
+                      <div className="mt-2 font-medium text-foreground italic">
+                        Category: {conflictQueue[conflictIndex].existingCat} | Sub: {conflictQueue[conflictIndex].existingSub}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>All conflicts resolved</div>
                 )}
               </DialogDescription>
             </DialogHeader>
-            <DialogFooter>
-              <div className="flex gap-2">
-                <Button onClick={() => processCurrentConflict("append")}>Append</Button>
-                <Button variant="outline" onClick={() => processCurrentConflict("replace")}>Replace</Button>
-                <Button variant="ghost" onClick={() => processCurrentConflict("cancel")}>Cancel</Button>
-              </div>
+            <DialogFooter className="sm:justify-start gap-2 pt-4">
+              <Button onClick={() => processCurrentConflict("append")} className="bg-green-600 hover:bg-green-700 flex-1">Append</Button>
+              <Button onClick={() => processCurrentConflict("replace")} variant="outline" className="flex-1">Replace</Button>
+              <Button variant="ghost" onClick={() => processCurrentConflict("cancel")} className="text-muted-foreground">Cancel All</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { getJSON, postJSON, apiFetch } from "./api";
 import { useAuth } from "./auth-context";
 
-export type Role = "admin" | "supplier" | "user" | "purchase_team" | "software_team" | "pre_sales" | "contractor";
+export type Role = "admin" | "supplier" | "user" | "purchase_team" | "software_team" | "pre_sales" | "contractor" | "product_manager";
 
 export interface User {
   id: string;
@@ -425,7 +425,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const addSupportMessage = async (senderName: string, message: string, info?: string) => {
     try {
-      const data = await postJSON('/messages', {       
+      const data = await postJSON('/messages', {
         senderName,
         message,
         info: info || null,
@@ -437,7 +437,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       console.warn('addSupportMessage failed', e);
       throw e;
     }
-  };  
+  };
 
   const deleteMessage = async (id: string) => {
     try {

@@ -100,6 +100,11 @@ export class PostgresStorage implements IStorage {
         password: "DemoPass123!",
         role: "supplier",
       },
+      {
+        username: "kamali@ctint.in",
+        password: "admin123",
+        role: "product_manager",
+      },
     ];
 
     for (const u of demoUsers) {
@@ -277,6 +282,7 @@ export class MemStorage implements IStorage {
       // ensure demo presales/contractor exist for mem storage too
       { username: "presales@example.com", password: "DemoPass123!", role: "pre_sales" },
       { username: "contractor@example.com", password: "DemoPass123!", role: "contractor" },
+      { username: "kamali@ctint.in", password: "admin123", role: "product_manager" },
     ];
 
     for (const u of demoUsers) {

@@ -257,6 +257,7 @@ export function Sidebar() {
     user?.role === "purchase_team";
   const isSupplierOrPurchase =
     user?.role === "supplier" || user?.role === "purchase_team";
+  const isProductManager = user?.role === "product_manager";
   const isClient = user?.role === "user";
 
   // ✅ Supplier approval visible ONLY for admin
@@ -308,7 +309,7 @@ export function Sidebar() {
             Overview
           </div>
           {/* Dashboard Link - hidden for suppliers, pre-sales, contractors currently per existing logic */}
-          {(!isPreSales && !isContractor && user?.role !== "supplier") && (
+          {(!isPreSales && !isContractor && user?.role !== "supplier" && !isProductManager) && (
             <Link href="/dashboard">
               <span
                 className={cn(
@@ -362,12 +363,12 @@ export function Sidebar() {
           )}
 
           {/* Creations Section */}
-          {(isAdminOrSoftwareOrPurchaseTeam || isPreSales) && (
+          {(isAdminOrSoftwareOrPurchaseTeam || isPreSales || isProductManager) && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Creations
               </div>
-              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && (
+              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
                 <Link href="/admin/dashboard?tab=materials">
                   <span
                     className={cn(
@@ -382,7 +383,7 @@ export function Sidebar() {
                   </span>
                 </Link>
               )}
-              {(isAdminOrSoftwareOrPurchaseTeam || isPreSales) && (
+              {(isAdminOrSoftwareOrPurchaseTeam || isPreSales || isProductManager) && (
                 <Link href="/admin/dashboard?tab=create-product">
                   <span
                     className={cn(
@@ -397,7 +398,7 @@ export function Sidebar() {
                   </span>
                 </Link>
               )}
-              {canCreateBOQAndProject && (
+              {canCreateBOQAndProject && !isProductManager && (
                 <Link href="/create-project">
                   <span
                     className={cn(
@@ -412,7 +413,7 @@ export function Sidebar() {
                   </span>
                 </Link>
               )}
-              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && (
+              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
                 <Link href="/admin/vendor-categories">
                   <span
                     className={cn(
@@ -431,7 +432,7 @@ export function Sidebar() {
           )}
 
           {/* Management Section */}
-          {(isAdminOrSoftwareOrPurchaseTeam || isPreSales) && (
+          {(isAdminOrSoftwareOrPurchaseTeam || isPreSales || isProductManager) && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Management
@@ -449,7 +450,7 @@ export function Sidebar() {
                   <Package className="h-4 w-4" /> Manage Product
                 </span>
               </Link>
-              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && (
+              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
                 <>
                   <Link href="/admin/manage-materials">
                     <span
@@ -512,7 +513,7 @@ export function Sidebar() {
           )}
 
           {/* BOQ / Projects Section */}
-          {(isAdminOrSoftware || isPreSales) && (
+          {(isAdminOrSoftware || isPreSales) && !isProductManager && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 BOQ / Projects
@@ -549,7 +550,7 @@ export function Sidebar() {
           )}
 
           {/* Approvals Section */}
-          {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && (
+          {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Approvals
@@ -655,7 +656,7 @@ export function Sidebar() {
             </>
           )}
           {/* Communication Section */}
-          {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && (
+          {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Communication

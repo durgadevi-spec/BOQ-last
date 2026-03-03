@@ -23,16 +23,14 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import * as XLSX from 'xlsx';
-// import VersionHistory from "@/components/VersionHistory"; // Not found
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import apiFetch from "@/lib/api";
-import { computeBoq, UnitType } from "@/lib/boqCalc";
+import { computeBoq } from "@/lib/boqCalc";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -47,6 +45,50 @@ const getExcelColumnName = (n: number) => {
   }
   return name;
 };
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
+const applyOperator = (base: number, mult: number, op: string) => {
+  if (op === "%") return base * (mult / 100);
+  if (op === "*") return base * mult;
+  if (op === "/") return mult !== 0 ? base / mult : 0;
+  return base + mult; // "+"
+};
+
+type SrcCtx = {
+  totalVal: number; rate: number; qty: number;
+  overrideRate: number; overrideTotal: number;
+  rowCalc: Record<string, number>;
+  customVals: Record<string, string>;
+};
+
+const resolveSource = (src: string, ctx: SrcCtx): number => {
+  if (src === "Total Value (₹)") return ctx.totalVal;
+  if (src === "Rate / Unit") return ctx.rate;
+  if (src === "Qty") return ctx.qty;
+  if (src === "Override Rate") return ctx.overrideRate;
+  if (src === "Override Total") return ctx.overrideTotal;
+  if (ctx.rowCalc[src] !== undefined) return ctx.rowCalc[src];
+  return parseFloat(ctx.customVals[src] || "0") || 0;
+};
+
+const getItemMetrics = (td: any) => {
+  const step11 = Array.isArray(td.step11_items) ? td.step11_items : [];
+  let itemTotal = 0, itemQty = 0;
+  if (td.materialLines && td.targetRequiredQty !== undefined) {
+    const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
+    const manualTotal = step11.filter((it: any) => it.manual).reduce((s: number, it: any) =>
+      s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
+    itemTotal = res.grandTotal + manualTotal;
+    itemQty = td.targetRequiredQty;
+  } else {
+    itemTotal = step11.reduce((s: number, it: any) =>
+      s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
+    itemQty = step11[0]?.qty || 0;
+  }
+  const itemRate = itemQty > 0 ? itemTotal / itemQty : itemTotal;
+  return { itemTotal, itemQty, itemRate, step11 };
+};
+// ─────────────────────────────────────────────────────────────────────────────
 
 type Project = {
   id: string;
@@ -115,23 +157,7 @@ type Step11Item = {
   [key: string]: any;
 };
 
-type DraggableHeaderColProps = {
-  col: any;
-  idx: number;
-  isVersionSubmitted: boolean;
-  allCols: any[];
-  getExcelColumnName: (n: number) => string;
-  handleGlobalCalculation: any;
-  globalColSettings: any;
-  handleHideColumn: any;
-  boqItems: any[];
-  customColumns: any;
-  customColumnValues: any;
-  saveItemLayout: any;
-  toast: any;
-  setCustomColumns: any;
-  setCustomColumnValues: any;
-};
+type DraggableHeaderColProps = { col: any; idx: number; isVersionSubmitted: boolean; allCols: any[]; getExcelColumnName: (n: number) => string; handleGlobalCalculation: any; globalColSettings: any; handleHideColumn: any; boqItems: any[]; customColumns: any; customColumnValues: any; saveItemLayout: any; toast: any; setCustomColumns: any; setCustomColumnValues: any; };
 
 const DraggableHeaderCol = ({
   col,
@@ -372,31 +398,20 @@ export default function FinalizeBoq() {
   const [newTemplateName, setNewTemplateName] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
 
-  // Per-product custom columns: { [boqItemId]: { name: string, isTotal: boolean, hideColumn?: boolean, hideTotal?: boolean, isPercentage?: boolean, percentageValue?: number, baseValue?: number, baseSource?: string }[] }
   const [customColumns, setCustomColumns] = useState<{ [id: string]: any[] }>({});
-  // Per-product custom column cell values: { [boqItemId]: { [rowIdx]: { [colName]: string } } }
   const [customColumnValues, setCustomColumnValues] = useState<{ [id: string]: { [rowIdx: number]: { [col: string]: string } } }>({});
-  // Selected product IDs for bulk delete
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
-  // Manual description per boqItem
   const [productDescriptions, setProductDescriptions] = useState<{ [id: string]: string }>({});
-  // Which product is currently being saved
   const [savingLayoutId, setSavingLayoutId] = useState<string | null>(null);
   const [showColumnTotals, setShowColumnTotals] = useState(true);
   const [hideSystemTotalFooter, setHideSystemTotalFooter] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // Manual quantity per boqItem: { [id: string]: string }
   const [productQuantities, setProductQuantities] = useState<{ [id: string]: string }>({});
-  // Manual unit per boqItem: { [id: string]: string }
   const [productUnits, setProductUnits] = useState<{ [id: string]: string }>({});
-  // Manual override rate per boqItem: { [id: string]: string }
   const [overrideRates, setOverrideRates] = useState<{ [id: string]: string }>({});
-  // Track which column is selected for Grand Total display
   const [grandTotalColumn, setGrandTotalColumn] = useState<string>("Total Value (₹)");
-  // Global Terms and Conditions
   const [termsAndConditions, setTermsAndConditions] = useState<string>("");
 
-  // Decoupled Global Header State for custom columns
   const [globalColSettings, setGlobalColSettings] = useState<{ [colName: string]: any }>({});
 
   const filteredVersions = React.useMemo(() => {
@@ -417,7 +432,6 @@ export default function FinalizeBoq() {
     });
   }, [versions]);
 
-  // Excel Export State
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [selectedExportCols, setSelectedExportCols] = useState<string[]>([]);
 
@@ -528,25 +542,7 @@ export default function FinalizeBoq() {
       let td = item.table_data || {};
       if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
 
-      let itemTotal = 0;
-      let itemRate = 0;
-      let itemQty = 0;
-
-      if (td.materialLines && td.targetRequiredQty !== undefined) {
-        const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-        const currentStep11Items = Array.isArray(td.step11_items) ? td.step11_items : [];
-        const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
-          s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
-        itemTotal = res.grandTotal + manualTotal;
-        itemQty = td.targetRequiredQty;
-        itemRate = itemQty > 0 ? itemTotal / itemQty : 0;
-      } else {
-        const currentStep11Items = Array.isArray(td.step11_items) ? td.step11_items : [];
-        itemTotal = currentStep11Items.reduce((s: number, it: any) =>
-          s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-        itemQty = currentStep11Items[0]?.qty || 0;
-        itemRate = itemQty > 0 ? itemTotal / itemQty : itemTotal;
-      }
+      const { itemRate, itemQty } = getItemMetrics(td);
 
       const manualQtyStr = productQuantities[item.id];
       const displayQty = manualQtyStr !== undefined
@@ -581,53 +577,15 @@ export default function FinalizeBoq() {
           const manualMultiplier = itemCol.percentageValue || 0;
 
           if (baseSource && baseSource !== "manual") {
-            let baseVal = 0;
-            if (baseSource === "Total Value (₹)") {
-              baseVal = baseTotalValue;
-            } else if (baseSource === "Rate / Unit") {
-              baseVal = itemRate;
-            } else if (baseSource === "Qty") {
-              baseVal = displayQty;
-            } else if (baseSource === "Override Rate") {
-              baseVal = parseFloat(overrideRates[item.id] || "0") || 0;
-            } else if (baseSource === "Override Total") {
-              baseVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
-            } else if (rowCalculatedValues[baseSource] !== undefined) {
-              baseVal = rowCalculatedValues[baseSource];
-            } else {
-              const valStr = customColumnValues[item.id]?.[0]?.[baseSource] || "0";
-              baseVal = parseFloat(valStr) || 0;
-            }
-
-            let multiplierVal = 0;
-            if (multiplierSource === "manual") {
-              multiplierVal = manualMultiplier;
-            } else if (multiplierSource === "Total Value (₹)") {
-              multiplierVal = baseTotalValue;
-            } else if (multiplierSource === "Rate / Unit") {
-              multiplierVal = itemRate;
-            } else if (multiplierSource === "Qty") {
-              multiplierVal = displayQty;
-            } else if (multiplierSource === "Override Rate") {
-              multiplierVal = parseFloat(overrideRates[item.id] || "0") || 0;
-            } else if (multiplierSource === "Override Total") {
-              multiplierVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
-            } else if (rowCalculatedValues[multiplierSource] !== undefined) {
-              multiplierVal = rowCalculatedValues[multiplierSource];
-            } else {
-              const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
-              multiplierVal = parseFloat(mValStr) || 0;
-            }
-
-            if (operator === "%") {
-              val = baseVal * (multiplierVal / 100);
-            } else if (operator === "*") {
-              val = baseVal * multiplierVal;
-            } else if (operator === "/") {
-              val = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
-            } else if (operator === "+") {
-              val = baseVal + multiplierVal;
-            }
+            const _ctx: SrcCtx = {
+              totalVal: baseTotalValue, rate: itemRate, qty: displayQty,
+              overrideRate: parseFloat(overrideRates[item.id] || "0") || 0,
+              overrideTotal: (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty,
+              rowCalc: rowCalculatedValues, customVals: customColumnValues[item.id]?.[0] || {},
+            };
+            const baseVal = resolveSource(baseSource, _ctx);
+            const multiplierVal = multiplierSource === "manual" ? manualMultiplier : resolveSource(multiplierSource, _ctx);
+            val = applyOperator(baseVal, multiplierVal, operator);
           } else {
             // Manual entry column
             val = parseFloat(customColumnValues[item.id]?.[0]?.[col.name] || "0") || 0;
@@ -658,7 +616,6 @@ export default function FinalizeBoq() {
     setCustomColumns(prev => ({ ...prev, ...nextColsMap }));
 
     try {
-      // Persist to each item in the version
       const updates = boqItems.map(item => saveItemLayout(item.id, nextColsMap[item.id]));
       await Promise.all(updates);
       toast({ title: "Order Saved", description: "Column sequence updated." });
@@ -691,13 +648,11 @@ export default function FinalizeBoq() {
       install_rate?: number;
     };
   }>({});
-  // Keep a ref in sync to avoid state-update races when user types and clicks Save quickly.
   const editedFieldsRef = useRef(editedFields);
   useEffect(() => {
     editedFieldsRef.current = editedFields;
   }, [editedFields]);
 
-  // Load projects from DB on mount
   useEffect(() => {
     const loadProjects = async () => {
       try {
@@ -718,7 +673,6 @@ export default function FinalizeBoq() {
     loadProjects();
   }, []);
 
-  // Handle fullscreen side-effects: Escape to close and prevent body scroll
   useEffect(() => {
     if (!isFullscreen) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -744,7 +698,6 @@ export default function FinalizeBoq() {
     }
   }, []);
 
-  // Load templates & global settings on mount
   useEffect(() => {
     const loadInitialData = async () => {
       try {
@@ -766,7 +719,6 @@ export default function FinalizeBoq() {
     loadInitialData();
   }, [loadTemplates]);
 
-  // Load versions when project is selected
   useEffect(() => {
     if (!selectedProjectId) {
       setVersions([]);
@@ -786,19 +738,15 @@ export default function FinalizeBoq() {
           const versionList = data.versions || [];
           setVersions(versionList);
 
-          // If we already have a selectedVersionId and it's still present, keep it.
           if (
             selectedVersionId &&
             versionList.some((v: BOMVersion) => v.id === selectedVersionId)
           ) {
-            // keep current selection
           } else {
-            // Auto-select first approved version if available, or first available from filtered list
             const approvedVersion = versionList.find(
               (v: BOMVersion) => v.status === "approved",
             );
 
-            // Re-apply filtering logic to the new list to find what SHOULD be selectable
             const CUTOFF_DATE = new Date("2026-03-02T00:00:00Z");
             const selectable = versionList.filter((v: BOMVersion) => {
               if (v.status === "approved") return true;
@@ -824,7 +772,6 @@ export default function FinalizeBoq() {
     loadVersions();
   }, [selectedProjectId]);
 
-  // Load BOM items for selected version
   useEffect(() => {
     if (!selectedVersionId) {
       setBoqItems([]);
@@ -835,50 +782,12 @@ export default function FinalizeBoq() {
 
     const loadBoqItemsAndEdits = async () => {
       try {
-        // Helper to safely parse JSON responses and log non-JSON bodies
         const safeParseJson = async (res: Response) => {
-          const ct = (res.headers.get("content-type") || "").toLowerCase();
           const text = await res.text();
-
-          // Allow empty/no-content responses (204) — treat as empty object
-          if (res.status === 204 || text.trim() === "") {
-            return {};
-          }
-
-          // If Content-Type explicitly says JSON, parse it
-          if (ct.includes("application/json")) {
-            try {
-              return JSON.parse(text);
-            } catch (e) {
-              console.error("safeParseJson: JSON parse failed", { url: res.url, status: res.status, bodySnippet: text.slice(0, 300), error: e });
-              throw new Error("Invalid JSON response from server");
-            }
-          }
-
-          // If Content-Type is missing or not JSON but body *looks like* JSON, try parsing
-          const trimmed = text.trim();
-          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-            try {
-              return JSON.parse(trimmed);
-            } catch (e) {
-              console.error("safeParseJson: body looks like JSON but parse failed", { url: res.url, status: res.status, bodySnippet: trimmed.slice(0, 300), error: e });
-              throw new Error("Invalid JSON response from server");
-            }
-          }
-
-          // Helpful debug when server returns HTML (Vite index.html) or other unexpected body
-          console.error(
-            "safeParseJson: server returned non-JSON response",
-            { url: res.url, status: res.status, contentType: ct, bodySnippet: text.slice(0, 200) },
-          );
-          const hint = trimmed.startsWith("<!DOCTYPE html")
-            ? "Looks like the request hit the frontend dev server (index.html) instead of the backend API. Check VITE_API_BASE_URL and dev server ports."
-            : undefined;
-          const errMsg = `Server returned non-JSON response (status=${res.status})${hint ? ' - ' + hint : ''}`;
-          throw new Error(errMsg);
+          if (!text.trim() || res.status === 204) return {};
+          try { return JSON.parse(text); } catch { throw new Error(`Invalid JSON (status=${res.status})`); }
         };
 
-        // Load BOM items                    
         const response = await apiFetch(
           `/api/boq-items/version/${encodeURIComponent(selectedVersionId)}`,
           { headers: {} },
@@ -889,7 +798,6 @@ export default function FinalizeBoq() {
             const items: BOMItem[] = data.items || [];
             setBoqItems(items);
 
-            // --- Restore finalize layout from saved table_data ---
             const restoredCols: { [id: string]: { name: string, isTotal: boolean, hideTotal?: boolean }[] } = {};
             const restoredVals: { [id: string]: { [rowIdx: number]: { [col: string]: string } } } = {};
             const restoredDescs: { [id: string]: string } = {};
@@ -907,7 +815,6 @@ export default function FinalizeBoq() {
               if (td.finalize_grand_total_column) restoredGrandTotalCol = td.finalize_grand_total_column;
 
               if (Array.isArray(td.finalize_columns) && td.finalize_columns.length > 0) {
-                // Backward compatibility: convert string arrays to objects
                 restoredCols[item.id] = td.finalize_columns.map((c: any) =>
                   typeof c === "string" ? { name: c, isTotal: false, hideTotal: false } : c
                 );
@@ -929,7 +836,6 @@ export default function FinalizeBoq() {
               }
             }
 
-            // Backfill HSN/SAC codes from products API for existing items
             try {
               const productsResp = await apiFetch("/api/products");
               if (productsResp.ok) {
@@ -946,7 +852,6 @@ export default function FinalizeBoq() {
                     if (prod) {
                       if (prod.hsn_code) td.hsn_code = prod.hsn_code;
                       if (prod.sac_code) td.sac_code = prod.sac_code;
-                      // Keep legacy for safety
                       if (prod.tax_code_value) {
                         td.hsn_sac_code = prod.tax_code_value;
                         td.hsn_sac_type = prod.tax_code_type || null;
@@ -961,7 +866,6 @@ export default function FinalizeBoq() {
             }
             if (Object.keys(restoredCols).length > 0) {
               setCustomColumns(restoredCols);
-              // Also initialize global settings from the first item that has custom columns
               const firstItemId = Object.keys(restoredCols)[0];
               if (firstItemId) {
                 const initialGlobal: any = {};
@@ -1000,8 +904,6 @@ export default function FinalizeBoq() {
     loadBoqItemsAndEdits();
   }, [selectedVersionId]);
 
-  // If URL contains ?project=, auto-select that project
-  // Only auto-select a project from the URL if it exists in the loaded projects.
   useEffect(() => {
     try {
       const qs =
@@ -1089,7 +991,6 @@ export default function FinalizeBoq() {
     if (!selectedProjectId || !selectedVersionId) return;
 
     try {
-      // Clone the item
       const tableData = typeof originalItem.table_data === 'string'
         ? JSON.parse(originalItem.table_data)
         : originalItem.table_data;
@@ -1119,8 +1020,6 @@ export default function FinalizeBoq() {
     }
   };
 
-
-
   const updateEditedField = (itemKey: string, field: string, value: any) => {
     setEditedFields((prev) => {
       const next = {
@@ -1130,7 +1029,6 @@ export default function FinalizeBoq() {
           [field]: value,
         },
       };
-      // keep ref in sync immediately to avoid races when Save is clicked right away
       editedFieldsRef.current = next;
       return next;
     });
@@ -1227,7 +1125,6 @@ export default function FinalizeBoq() {
     const oldMultiplier = oldSettings.percentageValue || 0;
     const deltaMultiplier = multiplier - oldMultiplier;
 
-    // Update the decoupled global state immediately
     setGlobalColSettings(prev => ({
       ...prev,
       [colName]: { baseValue: base, percentageValue: multiplier, baseSource, operator, multiplierSource }
@@ -1252,59 +1149,18 @@ export default function FinalizeBoq() {
       const currentRowMultiplier = itemCol?.percentageValue || oldMultiplier;
       const newRowMultiplier = currentRowMultiplier + deltaMultiplier;
 
-      // Ensure we have access to system values for resolution
-      let itemTotal = 0;
-      let itemQty = 0;
       let td = item.table_data || {};
       if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
-      const step11Items: Step11Item[] = Array.isArray(td.step11_items) ? td.step11_items : [];
+      const { itemRate, itemQty } = getItemMetrics(td);
+      const displayQty = productQuantities[item.id] !== undefined ? (parseFloat(productQuantities[item.id]) || 0) : itemQty;
 
-      if (td.materialLines && td.targetRequiredQty !== undefined) {
-        const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-        const manualTotal = step11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
-          s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
-        itemTotal = res.grandTotal + manualTotal;
-        itemQty = td.targetRequiredQty;
-      } else {
-        itemTotal = step11Items.reduce((s: number, it: any) =>
-          s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-        itemQty = step11Items[0]?.qty || 0;
-      }
-
-      const manualQtyStr = productQuantities[item.id];
-      const displayQty = manualQtyStr !== undefined ? (parseFloat(manualQtyStr) || 0) : itemQty;
-      const itemRate = itemQty > 0 ? itemTotal / itemQty : (itemTotal || 0);
-
-      let rowBase = base;
-      if (baseSource === "Total Value (₹)") {
-        rowBase = itemRate * displayQty;
-      } else if (baseSource === "Rate / Unit") {
-        rowBase = itemRate;
-      } else if (baseSource === "Qty") {
-        rowBase = displayQty;
-      } else if (baseSource === "Override Rate") {
-        rowBase = parseFloat(overrideRates[item.id] || "0") || 0;
-      } else if (baseSource === "Override Total") {
-        rowBase = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
-      } else if (baseSource !== "manual") {
-        const baseCol = itemCols.find(c => c.name === baseSource);
-        if (baseCol?.isTotal) {
-          let runningTotal = itemRate * displayQty;
-          let accumulator = 0;
-          for (const c of itemCols) {
-            if (c.name === baseSource) {
-              runningTotal += accumulator;
-              break;
-            }
-            const val = parseFloat(customColumnValues[item.id]?.[0]?.[c.name] || "0") || 0;
-            accumulator += val;
-          }
-          rowBase = runningTotal;
-        } else {
-          const valStr = customColumnValues[item.id]?.[0]?.[baseSource] || "0";
-          rowBase = parseFloat(valStr) || 0;
-        }
-      }
+      const overrideRate = parseFloat(overrideRates[item.id] || "0") || 0;
+      const srcCtx: SrcCtx = {
+        totalVal: itemRate * displayQty, rate: itemRate, qty: displayQty,
+        overrideRate, overrideTotal: overrideRate * displayQty,
+        rowCalc: {}, customVals: customColumnValues[item.id]?.[0] || {},
+      };
+      const rowBase = baseSource === "manual" ? base : resolveSource(baseSource, srcCtx);
 
       itemCols[colIdx] = {
         ...itemCols[colIdx],
@@ -1318,29 +1174,8 @@ export default function FinalizeBoq() {
       const updatedCols = itemCols;
       nextColsMap[item.id] = updatedCols;
 
-      let rowMultiplierVal = 0;
-      if (multiplierSource === "manual") {
-        rowMultiplierVal = newRowMultiplier;
-      } else if (multiplierSource === "Total Value (₹)") {
-        rowMultiplierVal = itemRate * displayQty;
-      } else if (multiplierSource === "Rate / Unit") {
-        rowMultiplierVal = itemRate;
-      } else if (multiplierSource === "Qty") {
-        rowMultiplierVal = displayQty;
-      } else if (multiplierSource === "Override Rate") {
-        rowMultiplierVal = parseFloat(overrideRates[item.id] || "0") || 0;
-      } else if (multiplierSource === "Override Total") {
-        rowMultiplierVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
-      } else {
-        const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
-        rowMultiplierVal = parseFloat(mValStr) || 0;
-      }
-
-      let calculated = 0;
-      if (operator === "%") calculated = rowBase * (rowMultiplierVal / 100);
-      else if (operator === "*") calculated = rowBase * rowMultiplierVal;
-      else if (operator === "/") calculated = rowMultiplierVal !== 0 ? rowBase / rowMultiplierVal : 0;
-      else if (operator === "+") calculated = rowBase + rowMultiplierVal;
+      const rowMultiplierVal = multiplierSource === "manual" ? newRowMultiplier : resolveSource(multiplierSource, srcCtx);
+      const calculated = applyOperator(rowBase, rowMultiplierVal, operator);
 
       const itemVals = { ...(customColumnValues[item.id] || {}) };
       itemVals[0] = { ...(itemVals[0] || {}), [colName]: calculated.toFixed(2) };
@@ -1372,85 +1207,20 @@ export default function FinalizeBoq() {
     const itemCol = itemCols[colIdx];
 
     const baseSource = baseSourceOverride || itemCol.baseSource || "Total Value (₹)";
-    let rowBase = 0;
-
-    // Ensure system values available
-    let itemTotal = 0;
-    let itemQty = 0;
     let td = item.table_data || {};
     if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
-    const step11Items: Step11Item[] = Array.isArray(td.step11_items) ? td.step11_items : [];
+    const { itemRate, itemQty } = getItemMetrics(td);
+    const displayQty = productQuantities[item.id] !== undefined ? (parseFloat(productQuantities[item.id]) || 0) : itemQty;
+    const overrideRate = parseFloat(overrideRates[item.id] || "0") || 0;
+    const srcCtx: SrcCtx = {
+      totalVal: itemRate * displayQty, rate: itemRate, qty: displayQty,
+      overrideRate, overrideTotal: overrideRate * displayQty,
+      rowCalc: {}, customVals: customColumnValues[item.id]?.[0] || {},
+    };
+    const rowBase = baseSource === "manual" ? 0 : resolveSource(baseSource, srcCtx);
+    const rowMultiplierVal = multiplierSource === "manual" ? multiplier : resolveSource(multiplierSource, srcCtx);
+    const calculated = applyOperator(rowBase, rowMultiplierVal, operator);
 
-    if (td.materialLines && td.targetRequiredQty !== undefined) {
-      const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
-      const manualTotal = step11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
-        s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
-      itemTotal = res.grandTotal + manualTotal;
-      itemQty = td.targetRequiredQty;
-    } else {
-      itemTotal = step11Items.reduce((s: number, it: any) =>
-        s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-      itemQty = step11Items[0]?.qty || 0;
-    }
-
-    const manualQtyStr = productQuantities[item.id];
-    const displayQty = manualQtyStr !== undefined ? (parseFloat(manualQtyStr) || 0) : itemQty;
-    const itemRate = itemQty > 0 ? itemTotal / itemQty : (itemTotal || 0);
-
-    if (baseSource === "Total Value (₹)") {
-      rowBase = itemRate * displayQty;
-    } else if (baseSource === "Rate / Unit") {
-      rowBase = itemRate;
-    } else if (baseSource === "Qty") {
-      rowBase = displayQty;
-    } else if (baseSource === "Override Rate") {
-      rowBase = parseFloat(overrideRates[item.id] || "0") || 0;
-    } else if (baseSource === "Override Total") {
-      rowBase = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
-    } else if (baseSource !== "manual") {
-      const baseCol = itemCols.find(c => c.name === baseSource);
-      if (baseCol?.isTotal) {
-        let runningTotal = itemRate * displayQty;
-        let accumulator = 0;
-        for (const c of itemCols) {
-          if (c.name === baseSource) {
-            runningTotal += accumulator;
-            break;
-          }
-          const val = parseFloat(customColumnValues[item.id]?.[0]?.[c.name] || "0") || 0;
-          accumulator += val;
-        }
-        rowBase = runningTotal;
-      } else {
-        const valStr = customColumnValues[item.id]?.[0]?.[baseSource] || "0";
-        rowBase = parseFloat(valStr) || 0;
-      }
-    }
-
-    let rowMultiplierVal = 0;
-    if (multiplierSource === "manual") {
-      rowMultiplierVal = multiplier;
-    } else if (multiplierSource === "Total Value (₹)") {
-      rowMultiplierVal = itemRate * displayQty;
-    } else if (multiplierSource === "Rate / Unit") {
-      rowMultiplierVal = itemRate;
-    } else if (multiplierSource === "Qty") {
-      rowMultiplierVal = displayQty;
-    } else if (multiplierSource === "Override Rate") {
-      rowMultiplierVal = parseFloat(overrideRates[item.id] || "0") || 0;
-    } else if (multiplierSource === "Override Total") {
-      rowMultiplierVal = (parseFloat(overrideRates[item.id] || "0") || 0) * displayQty;
-    } else {
-      const mValStr = customColumnValues[item.id]?.[0]?.[multiplierSource] || "0";
-      rowMultiplierVal = parseFloat(mValStr) || 0;
-    }
-    let calculated = 0;
-    if (operator === "%") calculated = rowBase * (rowMultiplierVal / 100);
-    else if (operator === "*") calculated = rowBase * rowMultiplierVal;
-    else if (operator === "/") calculated = rowMultiplierVal !== 0 ? rowBase / rowMultiplierVal : 0;
-    else if (operator === "+") calculated = rowBase + rowMultiplierVal;
-
-    // Update the column definition for this item
     itemCols[colIdx] = {
       ...itemCols[colIdx],
       baseSource,
@@ -1467,7 +1237,6 @@ export default function FinalizeBoq() {
     setCustomColumns(prev => ({ ...prev, [item.id]: updatedCols }));
     setCustomColumnValues(prev => ({ ...prev, [item.id]: itemVals }));
 
-    // Save both column definitions and values
     await saveItemLayout(item.id, updatedCols, itemVals);
   };
 
@@ -1485,7 +1254,6 @@ export default function FinalizeBoq() {
 
   const handleSaveProject = async () => {
     if (!selectedVersionId) return;
-    console.log("[FinalizeBoq] handleSaveProject START. editedFields (ref snapshot):", JSON.stringify(editedFieldsRef.current));
 
     try {
       // Permanently save the current edited fields to the database (use ref to avoid race)
@@ -1499,8 +1267,6 @@ export default function FinalizeBoq() {
         },
       );
 
-      console.log("[FinalizeBoq] Save API response status:", response.status);
-
       if (response.ok) {
         // Prefer authoritative data from server when available (server will return
         // `updatedItems`). If not present, fall back to optimistic merge + reload.
@@ -1512,7 +1278,6 @@ export default function FinalizeBoq() {
         }
 
         if (saveResp?.updatedItems && saveResp.updatedItems.length > 0) {
-          // Merge server-returned items into local state
           setBoqItems((prev) => {
             const byId = new Map(prev.map((i) => [i.id, i]));
             for (const up of saveResp.updatedItems) {
@@ -1528,7 +1293,6 @@ export default function FinalizeBoq() {
           setEditedFields({});
           editedFieldsRef.current = {};
         } else {
-          // Optimistic merge (UI stays consistent immediately)
           setBoqItems((prev) =>
             prev.map((item) => {
               const keys = Object.keys(editedFields).filter((k) => k.startsWith(`${item.id}-`));
@@ -1555,7 +1319,6 @@ export default function FinalizeBoq() {
             }),
           );
 
-          // Try to reload authoritative state from server. If reload fails we keep optimistic state.
           try {
             const loadResponse = await apiFetch(
               `/api/boq-items/version/${encodeURIComponent(selectedVersionId)}`,
@@ -1602,7 +1365,6 @@ export default function FinalizeBoq() {
         body: JSON.stringify({ status: "submitted" }),
       });
 
-      // Reload versions
       const response = await apiFetch(
         `/api/boq-versions/${encodeURIComponent(selectedProjectId!)}`,
         { headers: {} },
@@ -1797,11 +1559,8 @@ export default function FinalizeBoq() {
         return;
       }
 
-      // Preparation of data for sheet-level accuracy
       const sheetData: any[] = [];
 
-      // Add project info at the top if needed, or just headers
-      // Map headers - simple column names only
       const headers = selectedExportCols.map(colName => colName);
       sheetData.push(headers);
 
@@ -1823,22 +1582,8 @@ export default function FinalizeBoq() {
             ? tableData.targetRequiredQty
             : (currentStep11Items[0]?.qty || 0));
 
-        let totalVal = 0;
-        let rateSqft = 0;
-        if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
-          const res = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
-          const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
-            s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
-          totalVal = res.grandTotal + manualTotal;
-          rateSqft = tableData.targetRequiredQty > 0 ? totalVal / tableData.targetRequiredQty : 0;
-        } else {
-          totalVal = currentStep11Items.reduce((s: number, it: any) =>
-            s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-          rateSqft = (currentStep11Items[0]?.qty ?? 0) > 0 ? totalVal / (currentStep11Items[0]?.qty || 1) : totalVal;
-        }
-
-        // Adjust for manual qty
-        totalVal = rateSqft * displayQty;
+        const { itemRate: rateSqft } = getItemMetrics(tableData);
+        const totalVal = rateSqft * displayQty;
 
         const manualDesc = productDescriptions[boqItem.id] ?? (
           tableData.subcategory || currentStep11Items[0]?.description || category || ""
@@ -1849,7 +1594,6 @@ export default function FinalizeBoq() {
         let currentRunningTotal = totalVal;
         let accumulator = 0;
 
-        // 1. Calculate ALL potential columns in visual order to respect dependencies
         const allPotentialColsInOrder = [
           "S.No",
           "Product / Material",
@@ -1900,30 +1644,15 @@ export default function FinalizeBoq() {
                 const multiplierSource = (itemCol as any).multiplierSource || "manual";
                 const manualMultiplier = (itemCol as any).percentageValue || 0;
                 const operator = (itemCol as any).operator || "%";
-
-                let baseVal = 0;
-                if (baseSource === "Total Value (₹)") baseVal = totalVal;
-                else if (baseSource === "Rate / Unit") baseVal = rateSqft;
-                else if (baseSource === "Qty") baseVal = displayQty;
-                else if (baseSource === "Override Rate") baseVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
-                else if (baseSource === "Override Total") baseVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
-                else if (rowCalculatedValues[baseSource] !== undefined) baseVal = rowCalculatedValues[baseSource];
-                else baseVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[baseSource] || "0") || 0;
-
-                let multiplierVal = 0;
-                if (multiplierSource === "manual") multiplierVal = manualMultiplier;
-                else if (multiplierSource === "Total Value (₹)") multiplierVal = totalVal;
-                else if (multiplierSource === "Rate / Unit") multiplierVal = rateSqft;
-                else if (multiplierSource === "Qty") multiplierVal = displayQty;
-                else if (multiplierSource === "Override Rate") multiplierVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
-                else if (multiplierSource === "Override Total") multiplierVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
-                else if (rowCalculatedValues[multiplierSource] !== undefined) multiplierVal = rowCalculatedValues[multiplierSource];
-                else multiplierVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0") || 0;
-
-                if (operator === "%") valNum = baseVal * (multiplierVal / 100);
-                else if (operator === "*") valNum = baseVal * multiplierVal;
-                else if (operator === "/") valNum = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
-                else if (operator === "+") valNum = baseVal + multiplierVal;
+                const _oRate = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+                const _ctx: SrcCtx = {
+                  totalVal, rate: rateSqft, qty: displayQty,
+                  overrideRate: _oRate, overrideTotal: _oRate * displayQty,
+                  rowCalc: rowCalculatedValues, customVals: customColumnValues[boqItem.id]?.[0] || {},
+                };
+                const baseVal = resolveSource(baseSource, _ctx);
+                const multiplierVal = multiplierSource === "manual" ? manualMultiplier : resolveSource(multiplierSource, _ctx);
+                valNum = applyOperator(baseVal, multiplierVal, operator);
               } else {
                 valNum = parseFloat(customColumnValues[boqItem.id]?.[0]?.[colName] || "0") || 0;
               }
@@ -1935,7 +1664,6 @@ export default function FinalizeBoq() {
           }
         });
 
-        // 2. Build the row based ONLY on selectedExportCols
         const row: any[] = [];
         selectedExportCols.forEach(colName => {
           row.push(rowValues[colName] ?? "");
@@ -1943,7 +1671,6 @@ export default function FinalizeBoq() {
         sheetData.push(row);
       });
 
-      // Add Grand Totals footer row if columns are numeric
       const footerRow: any[] = Array(selectedExportCols.length).fill("");
       selectedExportCols.forEach((colName, idx) => {
         if (colName === "Product / Material") footerRow[idx] = "GRAND TOTAL";
@@ -1963,7 +1690,6 @@ export default function FinalizeBoq() {
       });
       sheetData.push(footerRow);
 
-      // Add Terms and Conditions at the bottom
       if (termsAndConditions && termsAndConditions.trim()) {
         sheetData.push([]); // Spacer
         sheetData.push([]); // Spacer
@@ -1980,7 +1706,6 @@ export default function FinalizeBoq() {
         });
       }
 
-      // Simple Worksheet creation
       const ws = XLSX.utils.aoa_to_sheet(sheetData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "BOQ");
@@ -2050,22 +1775,8 @@ export default function FinalizeBoq() {
             : (currentStep11Items[0]?.qty || 0));
 
         // Totals
-        let totalVal = 0;
-        let rateSqft = 0;
-        if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
-          const res = computeBoq(tableData.configBasis, tableData.materialLines, tableData.targetRequiredQty);
-          const manualTotal = currentStep11Items.filter((it: any) => it.manual).reduce((s: number, it: any) =>
-            s + (Number(it.qty) || 0) * (Number(it.supply_rate || 0) + Number(it.install_rate || 0)), 0);
-          totalVal = res.grandTotal + manualTotal;
-          rateSqft = tableData.targetRequiredQty > 0 ? totalVal / tableData.targetRequiredQty : 0;
-        } else {
-          totalVal = currentStep11Items.reduce((s: number, it: any) =>
-            s + (it.qty || 0) * ((it.supply_rate || 0) + (it.install_rate || 0)), 0);
-          rateSqft = (currentStep11Items[0]?.qty ?? 0) > 0 ? totalVal / (currentStep11Items[0]?.qty || 1) : totalVal;
-        }
-
-        // Adjust for manual qty
-        totalVal = rateSqft * displayQty;
+        const { itemRate: rateSqft } = getItemMetrics(tableData);
+        const totalVal = rateSqft * displayQty;
 
         const manualDesc = productDescriptions[boqItem.id] ?? (
           tableData.subcategory || currentStep11Items[0]?.description || category || ""
@@ -2073,7 +1784,6 @@ export default function FinalizeBoq() {
 
         grandTotalValue += totalVal;
 
-        // Custom column values for this row
         const customVals: string[] = [];
         let runningTotal = totalVal;
         let accumulator = 0;
@@ -2094,29 +1804,15 @@ export default function FinalizeBoq() {
             const manualMultiplier = (itemCol as any).percentageValue || 0;
 
             if (baseSource && baseSource !== "manual") {
-              let bVal = 0;
-              if (baseSource === "Total Value (₹)") bVal = totalVal;
-              else if (baseSource === "Rate / Unit") bVal = rateSqft;
-              else if (baseSource === "Qty") bVal = displayQty;
-              else if (baseSource === "Override Rate") bVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
-              else if (baseSource === "Override Total") bVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
-              else if (rowCalculatedValues[baseSource] !== undefined) bVal = rowCalculatedValues[baseSource];
-              else bVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[baseSource] || "0") || 0;
-
-              let mVal = 0;
-              if (multiplierSource === "manual") mVal = manualMultiplier;
-              else if (multiplierSource === "Total Value (₹)") mVal = totalVal;
-              else if (multiplierSource === "Rate / Unit") mVal = rateSqft;
-              else if (multiplierSource === "Qty") mVal = displayQty;
-              else if (multiplierSource === "Override Rate") mVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
-              else if (multiplierSource === "Override Total") mVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
-              else if (rowCalculatedValues[multiplierSource] !== undefined) mVal = rowCalculatedValues[multiplierSource];
-              else mVal = parseFloat(customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0") || 0;
-
-              if (operator === "%") val = bVal * (mVal / 100);
-              else if (operator === "*") val = bVal * mVal;
-              else if (operator === "/") val = mVal !== 0 ? bVal / mVal : 0;
-              else if (operator === "+") val = bVal + mVal;
+              const _oRate = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+              const _ctx: SrcCtx = {
+                totalVal, rate: rateSqft, qty: displayQty,
+                overrideRate: _oRate, overrideTotal: _oRate * displayQty,
+                rowCalc: rowCalculatedValues, customVals: customColumnValues[boqItem.id]?.[0] || {},
+              };
+              const bVal = resolveSource(baseSource, _ctx);
+              const mVal = multiplierSource === "manual" ? manualMultiplier : resolveSource(multiplierSource, _ctx);
+              val = applyOperator(bVal, mVal, operator);
             } else {
               val = parseFloat(customColumnValues[boqItem.id]?.[0]?.[col.name] || "0") || 0;
             }
@@ -2142,7 +1838,6 @@ export default function FinalizeBoq() {
         ]);
       });
 
-      // Add Grand Totals footer row to PDF body
       const footerRow = [
         "",
         "GRAND TOTAL",
@@ -2804,7 +2499,6 @@ export default function FinalizeBoq() {
                         const category = tableData.category || "";
                         const isSelected = selectedProductIds.has(boqItem.id);
 
-                        // Compute totals
                         let total = 0;
                         let rateSqft = 0;
                         if (tableData.materialLines && tableData.targetRequiredQty !== undefined) {
@@ -2958,49 +2652,15 @@ export default function FinalizeBoq() {
                                   let multiplierVal = 0;
 
                                   if (isCalculated) {
-                                    let baseVal = 0;
-                                    if (baseSource === "Total Value (₹)") {
-                                      baseVal = baseTotalValue;
-                                    } else if (baseSource === "Rate / Unit") {
-                                      baseVal = rateSqft;
-                                    } else if (baseSource === "Unit") {
-                                      baseVal = 0; // Units aren't numeric
-                                    } else if (baseSource === "Qty") {
-                                      baseVal = displayQty;
-                                    } else if (baseSource === "Override Rate") {
-                                      baseVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
-                                    } else if (baseSource === "Override Total") {
-                                      baseVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
-                                    } else if (rowCalculatedValues[baseSource] !== undefined) {
-                                      baseVal = rowCalculatedValues[baseSource];
-                                    } else {
-                                      const baseValStr = customColumnValues[boqItem.id]?.[0]?.[baseSource] || "0";
-                                      baseVal = parseFloat(baseValStr) || 0;
-                                    }
-
-                                    if (multiplierSource === "manual") {
-                                      multiplierVal = manualMultiplier;
-                                    } else if (multiplierSource === "Total Value (₹)") {
-                                      multiplierVal = baseTotalValue;
-                                    } else if (multiplierSource === "Rate / Unit") {
-                                      multiplierVal = rateSqft;
-                                    } else if (multiplierSource === "Qty") {
-                                      multiplierVal = displayQty;
-                                    } else if (multiplierSource === "Override Rate") {
-                                      multiplierVal = parseFloat(overrideRates[boqItem.id] || "0") || 0;
-                                    } else if (multiplierSource === "Override Total") {
-                                      multiplierVal = (parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty;
-                                    } else if (rowCalculatedValues[multiplierSource] !== undefined) {
-                                      multiplierVal = rowCalculatedValues[multiplierSource];
-                                    } else {
-                                      const mValStr = customColumnValues[boqItem.id]?.[0]?.[multiplierSource] || "0";
-                                      multiplierVal = parseFloat(mValStr) || 0;
-                                    }
-
-                                    if (operator === "%") valNum = baseVal * (multiplierVal / 100);
-                                    else if (operator === "*") valNum = baseVal * multiplierVal;
-                                    else if (operator === "/") valNum = multiplierVal !== 0 ? baseVal / multiplierVal : 0;
-                                    else if (operator === "+") valNum = baseVal + multiplierVal;
+                                    const _oRate = parseFloat(overrideRates[boqItem.id] || "0") || 0;
+                                    const _ctx: SrcCtx = {
+                                      totalVal: baseTotalValue, rate: rateSqft, qty: displayQty,
+                                      overrideRate: _oRate, overrideTotal: _oRate * displayQty,
+                                      rowCalc: rowCalculatedValues, customVals: customColumnValues[boqItem.id]?.[0] || {},
+                                    };
+                                    const baseVal = resolveSource(baseSource, _ctx);
+                                    multiplierVal = multiplierSource === "manual" ? manualMultiplier : resolveSource(multiplierSource, _ctx);
+                                    valNum = applyOperator(baseVal, multiplierVal, operator);
                                   } else {
                                     valNum = parseFloat(customColumnValues[boqItem.id]?.[0]?.[col.name] || "0") || 0;
                                   }

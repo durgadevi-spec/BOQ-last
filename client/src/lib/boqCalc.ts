@@ -84,9 +84,9 @@ export function computeBoq(
         const supplyRate = Number(l.supplyRate) || 0;
         const installRate = Number(l.installRate) || 0;
 
-        const supplyAmount = roundOffQty * supplyRate;
-        const installAmount = roundOffQty * installRate;
-        const lineTotal = supplyAmount + installAmount;
+        const supplyAmount = Number((roundOffQty * supplyRate).toFixed(2));
+        const installAmount = Number((roundOffQty * installRate).toFixed(2));
+        const lineTotal = Number((supplyAmount + installAmount).toFixed(2));
 
         return {
             ...l,

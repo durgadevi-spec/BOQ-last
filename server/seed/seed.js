@@ -11,9 +11,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 // A few representative shops to seed (no explicit UUIDs; Postgres will generate them)
 const shops = [
-  { name: 'City Hardware', location: 'Downtown', city: 'New York', state: 'NY', country: 'USA', pincode: '10001', rating: 4.5, categories: ['Civil','Gypsum','Plywood','Flooring','Painting','Doors','Blinds','Electrical','Plumbing'], gstNo: '12AABCT1234H1Z1' },
-  { name: "Builder's Haven", location: 'Mall Area', city: 'Los Angeles', state: 'CA', country: 'USA', pincode: '90001', rating: 4.2, categories: ['Civil','Plywood','Glass','Flooring','Painting','Doors','Electrical'], gstNo: '12AABCT1234H1Z2' },
-  { name: 'BuildMart Standard', location: 'City Center', city: 'Chicago', state: 'IL', country: 'USA', pincode: '60601', rating: 4.2, categories: ['Civil','Gypsum','Plywood','Flooring','Painting','Doors','Blinds'], gstNo: '12AABCT1234H1Z3' }
+  { name: 'City Hardware', location: 'Downtown', city: 'New York', state: 'NY', country: 'USA', pincode: '10001', rating: 4.5, categories: ['Civil', 'Gypsum', 'Plywood', 'Flooring', 'Painting', 'Doors', 'Blinds', 'Electrical', 'Plumbing'], gstNo: '12AABCT1234H1Z1' },
+  { name: "Builder's Haven", location: 'Mall Area', city: 'Los Angeles', state: 'CA', country: 'USA', pincode: '90001', rating: 4.2, categories: ['Civil', 'Plywood', 'Glass', 'Flooring', 'Painting', 'Doors', 'Electrical'], gstNo: '12AABCT1234H1Z2' },
+  { name: 'BuildMart Standard', location: 'City Center', city: 'Chicago', state: 'IL', country: 'USA', pincode: '60601', rating: 4.2, categories: ['Civil', 'Gypsum', 'Plywood', 'Flooring', 'Painting', 'Doors', 'Blinds'], gstNo: '12AABCT1234H1Z3' }
 ];
 
 // Scan client files to extract hardcoded material objects (code + label/name)
@@ -68,7 +68,7 @@ function extractMaterialsFromClient() {
         }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   // return as array
   return Array.from(results.values()).map((r) => ({ name: r.name || r.code, code: r.code }));
@@ -86,15 +86,26 @@ async function seed() {
     for (const s of shops) {
       const res = await client.query('SELECT id FROM shops WHERE name = $1 LIMIT 1', [s.name]);
       if (res.rowCount === 0) {
-        await client.query('INSERT INTO shops (name,location,city,state,country,pincode,rating,categories,gstno,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())', [s.name,s.location,s.city,s.state,s.country,s.pincode,s.rating,JSON.stringify(s.categories),s.gstNo]);
+        await client.query('INSERT INTO shops (name,location,city,state,country,pincode,rating,categories,gstno,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())', [s.name, s.location, s.city, s.state, s.country, s.pincode, s.rating, JSON.stringify(s.categories), s.gstNo]);
       }
     }
 
-    // Insert materials if code not present. We do not set shop_id here (left NULL).
+    // Insert materials if code not present.
+    // Try to link to a material_template if possible.
     for (const m of materials) {
       const check = await client.query('SELECT id FROM materials WHERE code = $1 LIMIT 1', [m.code]);
       if (check.rowCount === 0) {
-        await client.query('INSERT INTO materials (name,code,rate,unit,category,brandname,created_at) VALUES ($1,$2,$3,$4,$5,$6,now())', [m.name || m.code, m.code, 0, null, null, null]);
+        // Find matching template
+        let templateId = null;
+        const tplCheck = await client.query('SELECT id FROM material_templates WHERE code = $1 OR name = $2 LIMIT 1', [m.code, m.name]);
+        if (tplCheck.rowCount > 0) {
+          templateId = tplCheck.rows[0].id;
+        }
+
+        await client.query(
+          'INSERT INTO materials (name, code, template_id, rate, unit, category, brandname, approved, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())',
+          [m.name || m.code, m.code, templateId, 0, null, null, null, true]
+        );
       }
     }
 

@@ -100,15 +100,15 @@ function ClientDashboard() {
                   <CardDescription>Send a message to the admin team</CardDescription>
                 </div>
               </div>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={() => setShowSupport(!showSupport)}
               >
                 {showSupport ? "Cancel" : "Send Message"}
               </Button>
             </div>
           </CardHeader>
-          
+
           {showSupport && (
             <CardContent className="space-y-4">
               {/* Sender Name Input */}
@@ -233,6 +233,9 @@ export default function Dashboard() {
       case 'supplier':
         setLocation("/supplier/dashboard");
         break;
+      case 'product_manager':
+        setLocation("/admin/dashboard?tab=create-product");
+        break;
       default:
         // Stay on generic dashboard for users
         break;
@@ -247,11 +250,15 @@ export default function Dashboard() {
   }
 
   if (user.role === 'supplier') {
-     return <SupplierMaterials />;
+    return <SupplierMaterials />;
   }
 
   if (user.role === 'purchase_team') {
-     return <AdminDashboard />;
+    return <AdminDashboard />;
+  }
+
+  if (user.role === 'product_manager') {
+    return <AdminDashboard />;
   }
 
   // Client / User role

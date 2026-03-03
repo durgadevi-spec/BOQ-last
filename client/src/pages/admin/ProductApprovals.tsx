@@ -33,6 +33,7 @@ type Approval = {
   dim_b: string | null;
   dim_c: string | null;
   description: string | null;
+  rejection_reason: string | null;
   status: string;
   created_by: string;
   created_at: string;
@@ -124,10 +125,20 @@ export default function ProductApprovals() {
   };
 
   const handleReject = async (id: string) => {
-    if (!confirm("Are you sure you want to REJECT this product configuration?")) return;
+    const reason = prompt("Please enter a reason for rejection:");
+    if (reason === null) return; // User cancelled
+    if (!reason.trim()) {
+      toast({ title: "Reason Required", description: "You must provide a reason for rejection.", variant: "destructive" });
+      return;
+    }
+
     setActionLoading(id);
     try {
-      const res = await apiFetch(`/api/product-approvals/${id}/reject`, { method: "POST" });
+      const res = await apiFetch(`/api/product-approvals/${id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rejection_reason: reason.trim() })
+      });
       if (res.ok) {
         toast({ title: "Rejected", description: "Product configuration has been rejected." });
         fetchApprovals();
@@ -234,24 +245,31 @@ export default function ProductApprovals() {
                               {new Date(approval.created_at).toLocaleDateString()}
                             </TableCell>
                             <TableCell>
-                              <Badge
-                                variant={
-                                  approval.status === "approved"
-                                    ? "default"
-                                    : approval.status === "rejected"
-                                    ? "destructive"
-                                    : "secondary"
-                                }
-                                className={
-                                  approval.status === "approved"
-                                    ? "bg-green-100 text-green-800 hover:bg-green-100"
-                                    : approval.status === "rejected"
-                                    ? "bg-red-100 text-red-800 hover:bg-red-100"
-                                    : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100"
-                                }
-                              >
-                                {approval.status.toUpperCase()}
-                              </Badge>
+                              <div className="flex flex-col gap-1">
+                                <Badge
+                                  variant={
+                                    approval.status === "approved"
+                                      ? "default"
+                                      : approval.status === "rejected"
+                                        ? "destructive"
+                                        : "secondary"
+                                  }
+                                  className={
+                                    approval.status === "approved"
+                                      ? "bg-green-100 text-green-800 hover:bg-green-100"
+                                      : approval.status === "rejected"
+                                        ? "bg-red-100 text-red-800 hover:bg-red-100"
+                                        : "bg-yellow-100 text-yellow-800 hover:bg-yellow-100"
+                                  }
+                                >
+                                  {approval.status.toUpperCase()}
+                                </Badge>
+                                {approval.status === "rejected" && approval.rejection_reason && (
+                                  <span className="text-[10px] text-red-600 font-medium max-w-[150px] truncate" title={approval.rejection_reason}>
+                                    Reason: {approval.rejection_reason}
+                                  </span>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
                               {approval.status === "pending" && (

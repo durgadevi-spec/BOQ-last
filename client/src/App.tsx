@@ -29,20 +29,9 @@ import BulkMaterialUpload from "@/pages/admin/BulkMaterialUpload";
 import ProductApprovals from "@/pages/admin/ProductApprovals";
 import BomApprovals from "@/pages/admin/BomApprovals";
 
-import CivilWallEstimator from "@/pages/estimators/CivilWallEstimator";
-import FlooringEstimator from "@/pages/estimators/FlooringEstimator";
-import FalseCeilingEstimator from "@/pages/estimators/FalseCeilingEstimator";
-import PaintingEstimator from "@/pages/estimators/PaintingEstimator";
-import DoorsEstimator from "@/pages/estimators/DoorsEstimator";
-import BlindsEstimator from "@/pages/estimators/BlindsEstimator";
-import ElectricalEstimator from "@/pages/estimators/ElectricalEstimator";
-import PlumbingEstimator from "@/pages/estimators/PlumbingEstimator";
-import MSWorkEstimator from "@/pages/estimators/MSWorkEstimator";
-import SSWorkEstimator from "@/pages/estimators/SSWorkEstimator";
-import FireFightingEstimator from "@/pages/estimators/FireFightingEstimator";
-import DynamicEstimator from "@/pages/estimators/DynamicEstimator";
 
-import ItemMaster from "@/pages/ItemMaster";
+
+
 import Subscription from "@/pages/Subscription";
 import BoqReview from "@/pages/BoqReview";
 import CreateBoq from "@/pages/CreateBoq";
@@ -81,31 +70,8 @@ function Router() {
       <Route path="/create-bom" component={CreateBoq} />
       <Route path="/finalize-bom" component={FinalizeBoq} />
       <Route path="/project-dashboard" component={ProjectDashboard} />
-      <Route path="/item-master" component={ItemMaster} />
       <Route path="/bom-review" component={BoqReview} />
 
-      {/* ================= ESTIMATORS ================= */}
-      {/* Hardcoded estimators for predefined categories */}
-      <Route path="/estimators/civil-wall" component={CivilWallEstimator} />
-      <Route path="/estimators/flooring" component={FlooringEstimator} />
-      <Route
-        path="/estimators/false-ceiling"
-        component={FalseCeilingEstimator}
-      />
-      <Route path="/estimators/painting" component={PaintingEstimator} />
-      <Route path="/estimators/doors" component={DoorsEstimator} />
-      <Route path="/estimators/blinds" component={BlindsEstimator} />
-      <Route path="/estimators/electrical" component={ElectricalEstimator} />
-      <Route path="/estimators/plumbing" component={PlumbingEstimator} />
-      <Route path="/estimators/ms-work" component={MSWorkEstimator} />
-      <Route path="/estimators/ss-work" component={SSWorkEstimator} />
-      <Route
-        path="/estimators/fire-fighting"
-        component={FireFightingEstimator}
-      />
-
-      {/* Dynamic estimator for new database subcategories - fallback route */}
-      <Route path="/estimators/:subcategory" component={DynamicEstimator} />
 
       <Route path="/admin/dashboard" component={AdminDashboard} />
       <Route path="/admin/manage-materials" component={ManageMaterialsPage} />
