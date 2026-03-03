@@ -2795,6 +2795,12 @@ export async function registerRoutes(
           [subName]
         );
 
+        // Update products to be uncategorized for this subcategory
+        await query(
+          "UPDATE products SET subcategory = NULL WHERE subcategory = $1",
+          [subName]
+        );
+
         // Simply delete the subcategory record from lookup table
         const result = await query(
           "DELETE FROM material_subcategories WHERE id = $1 RETURNING id",
@@ -2806,7 +2812,7 @@ export async function registerRoutes(
           return;
         }
 
-        res.json({ message: "Subcategory deleted successfully (materials uncategorized)" });
+        res.json({ message: "Subcategory deleted successfully (materials and products uncategorized)" });
       } catch (err: any) {
         console.error("/api/subcategories DELETE error:", {
           message: err.message,
@@ -2872,6 +2878,15 @@ export async function registerRoutes(
         );
         console.log("Deleted subcategories records:", subcatsResult.rowCount);
 
+        // Update products to be uncategorized for this category
+        console.log("Uncategorizing products for category:", name);
+        // Products only store subcategory, we need to find products whose subcategory belongs to this category
+        const productsUpdateResult = await query(
+          "UPDATE products SET subcategory = NULL WHERE subcategory IN (SELECT name FROM material_subcategories WHERE category = $1)",
+          [name]
+        );
+        console.log("Updated products (uncategorized):", productsUpdateResult.rowCount);
+
         // Delete the category record itself
         console.log("Deleting category record:", name);
         const result = await query(
@@ -2888,7 +2903,7 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Category not found" });
         }
 
-        res.json({ message: "Category deleted (materials and templates uncategorized)", category: result.rows[0] });
+        res.json({ message: "Category deleted (materials, templates and products uncategorized)", category: result.rows[0] });
       } catch (err) {
         console.error("/api/categories/:name DELETE error", err);
         res.status(500).json({ message: "failed to delete category" });
@@ -5715,6 +5730,73 @@ export async function registerRoutes(
       } catch (err) {
         console.error("POST /api/product-approvals/:id/reject error:", err);
         res.status(500).json({ message: "Failed to reject request" });
+      }
+    }
+  );
+
+  // PUT /api/product-approvals/:id - Update an approval request (Admin only)
+  app.put(
+    "/api/product-approvals/:id",
+    authMiddleware,
+    requireRole("admin", "software_team"),
+    async (req: Request, res: Response) => {
+      const { id } = req.params;
+      const {
+        configName, totalCost, items, requiredUnitType, baseRequiredQty,
+        wastagePctDefault, dimA, dimB, dimC, description
+      } = req.body;
+
+      try {
+        await query("BEGIN");
+        try {
+          // Update the main approval record
+          const updateResult = await query(
+            `UPDATE product_approvals SET 
+              config_name = $1, total_cost = $2, required_unit_type = $3, 
+              base_required_qty = $4, wastage_pct_default = $5, dim_a = $6, 
+              dim_b = $7, dim_c = $8, description = $9, updated_at = NOW()
+            WHERE id = $10 RETURNING id`,
+            [
+              configName, totalCost, requiredUnitType, baseRequiredQty,
+              wastagePctDefault, dimA, dimB, dimC, description, id
+            ]
+          );
+
+          if (updateResult.rows.length === 0) {
+            await query("ROLLBACK");
+            res.status(404).json({ message: "Approval request not found" });
+            return;
+          }
+
+          // Update items: delete and recreate is simpler than matching IDs
+          if (items && Array.isArray(items)) {
+            await query("DELETE FROM product_approval_items WHERE approval_id = $1", [id]);
+            for (const item of items) {
+              await query(
+                `INSERT INTO product_approval_items
+                 (approval_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, base_qty, wastage_pct, apply_wastage, shop_name)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+                [
+                  id, item.material_id || item.materialId, item.material_name || item.materialName,
+                  item.unit, item.qty, item.rate, item.supply_rate || item.supplyRate,
+                  item.install_rate || item.installRate, item.location, item.amount,
+                  item.base_qty || item.baseQty, item.wastage_pct || item.wastagePct,
+                  item.apply_wastage !== undefined ? item.apply_wastage : (item.applyWastage !== undefined ? item.applyWastage : true),
+                  item.shop_name || item.shopName || null
+                ]
+              );
+            }
+          }
+
+          await query("COMMIT");
+          res.json({ message: "Approval request updated successfully" });
+        } catch (err) {
+          await query("ROLLBACK");
+          throw err;
+        }
+      } catch (err) {
+        console.error("PUT /api/product-approvals/:id error:", err);
+        res.status(500).json({ message: "Failed to update approval request" });
       }
     }
   );

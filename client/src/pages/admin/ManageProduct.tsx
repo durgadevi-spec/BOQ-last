@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, Plus, ArrowRight, ArrowLeft, Trash2, Edit, Save, Check, XCircle } from "lucide-react";
+import { Search, Loader2, Plus, ArrowRight, ArrowLeft, Trash2, Edit, Save, Check, XCircle, Layers } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import apiFetch from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -389,10 +389,42 @@ export default function ManageProduct() {
             <div className="container mx-auto py-8 px-4">
                 <Card className="max-w-6xl mx-auto shadow-xl border-none">
                     <CardHeader className="bg-primary/5 border-b pb-6">
-                        <CardTitle className="flex items-center justify-between">
-                            <span className="text-3xl font-extrabold tracking-tight">Manage Product</span>
-                            {selectedProduct && <Badge variant="outline" className="text-sm font-semibold py-1.5 px-4 bg-primary/10 border-primary/20">{selectedProduct.name}</Badge>}
-                        </CardTitle>
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                            <CardTitle className="flex items-center gap-4">
+                                <span className="text-3xl font-extrabold tracking-tight">Manage Product</span>
+                                {selectedProduct && <Badge variant="outline" className="text-sm font-semibold py-1.5 px-4 bg-primary/10 border-primary/20">{selectedProduct.name}</Badge>}
+                            </CardTitle>
+
+                            {/* Materials Filter - Only shown in Step 2 */}
+                            {step === 2 && (
+                                <div className="flex flex-wrap items-center gap-4 animate-in fade-in duration-300">
+                                    <div className="flex items-center gap-2">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground whitespace-nowrap">Category</label>
+                                        <Select value={selectedCategory} onValueChange={val => { setSelectedCategory(val); setSelectedSubcategory(ALL); }}>
+                                            <SelectTrigger className="h-9 w-[180px] bg-white border-primary/20 shadow-sm text-xs font-bold">
+                                                <SelectValue placeholder="All Categories" />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-[300px] overflow-y-auto">
+                                                <SelectItem value={ALL}>All Categories</SelectItem>
+                                                {categoriesData?.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground whitespace-nowrap">Subcategory</label>
+                                        <Select value={selectedSubcategory} onValueChange={setSelectedSubcategory} disabled={selectedCategory === ALL}>
+                                            <SelectTrigger className="h-9 w-[180px] bg-white border-primary/20 shadow-sm text-xs font-bold">
+                                                <SelectValue placeholder="All Subcategories" />
+                                            </SelectTrigger>
+                                            <SelectContent className="max-h-[300px] overflow-y-auto">
+                                                <SelectItem value={ALL}>All Subcategories</SelectItem>
+                                                {subcategoriesData?.map(sub => <SelectItem key={sub} value={sub}>{sub}</SelectItem>)}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </CardHeader>
                     <CardContent className="p-8">
 
@@ -482,7 +514,30 @@ export default function ManageProduct() {
                                                                 </div>
                                                                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                                     <Button variant="ghost" size="sm" onClick={() => loadSpecificConfig(cd)} className="h-8 text-primary hover:text-primary hover:bg-primary/10"><Edit className="h-4 w-4 mr-1" /> Load</Button>
-                                                                    <Button variant="ghost" size="sm" onClick={() => deleteConfig(cd.product.id)} className="h-8 text-red-500 hover:text-red-700 hover:bg-red-50"><span className="text-xs font-bold">🗑 Delete</span></Button>
+                                                                                <Button variant="ghost" size="sm" onClick={async () => {
+                                                                                    const newName = prompt('Enter new configuration name:', cd.product.config_name || '');
+                                                                                    if (newName === null) return;
+                                                                                    const trimmed = newName.trim();
+                                                                                    if (!trimmed) { alert('Name cannot be empty'); return; }
+                                                                                    try {
+                                                                                        const res = await apiFetch(`/api/step11-products/config/${cd.product.id}`, {
+                                                                                            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config_name: trimmed })
+                                                                                        });
+                                                                                        if (res.ok) {
+                                                                                            // update local list
+                                                                                            setPreviousConfigs(prev => prev.map(p => p.product.id === cd.product.id ? { ...p, product: { ...p.product, config_name: trimmed } } : p));
+                                                                                            setConfigName(trimmed);
+                                                                                            toast({ title: 'Renamed', description: 'Configuration renamed successfully.' });
+                                                                                        } else {
+                                                                                            const data = await res.json().catch(() => ({}));
+                                                                                            toast({ title: 'Error', description: data.message || 'Failed to rename', variant: 'destructive' });
+                                                                                        }
+                                                                                    } catch (e) {
+                                                                                        console.error(e);
+                                                                                        toast({ title: 'Error', description: 'Failed to rename', variant: 'destructive' });
+                                                                                    }
+                                                                                }} className="h-8 text-yellow-600 hover:text-yellow-700 hover:bg-yellow-50"><span className="text-xs font-bold">✎ Edit</span></Button>
+                                                                                <Button variant="ghost" size="sm" onClick={() => deleteConfig(cd.product.id)} className="h-8 text-red-500 hover:text-red-700 hover:bg-red-50"><span className="text-xs font-bold">🗑 Delete</span></Button>
                                                                 </div>
                                                             </div>
                                                         ))}
@@ -531,75 +586,132 @@ export default function ManageProduct() {
 
                         {/* Step 2 */}
                         {step === 2 && (
-                            <div className="space-y-8">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="space-y-3">
-                                        <label className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Category</label>
-                                        <Select value={selectedCategory} onValueChange={val => { setSelectedCategory(val); setSelectedSubcategory(ALL); }}>
-                                            <SelectTrigger className="h-11"><SelectValue placeholder="All Categories" /></SelectTrigger>
-                                            <SelectContent className="max-h-[300px] overflow-y-auto">
-                                                <SelectItem value={ALL}>All Categories</SelectItem>
-                                                {categoriesData?.map(cat => <SelectItem key={cat} value={cat}>{cat}</SelectItem>)}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                    <div className="space-y-3">
-                                        <label className="text-sm font-bold uppercase tracking-wider text-muted-foreground">Subcategory</label>
-                                        <Select value={selectedSubcategory} onValueChange={setSelectedSubcategory} disabled={selectedCategory === ALL}>
-                                            <SelectTrigger className="h-11"><SelectValue placeholder="All Subcategories" /></SelectTrigger>
-                                            <SelectContent className="max-h-[300px] overflow-y-auto">
-                                                <SelectItem value={ALL}>All Subcategories</SelectItem>
-                                                {subcategoriesData?.map(sub => <SelectItem key={sub} value={sub}>{sub}</SelectItem>)}
-                                            </SelectContent>
-                                        </Select>
-                                    </div>
-                                </div>
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-xl font-bold">2. Select Materials/Items</h3>
-                                        <div className="flex items-center gap-3">
-                                            <div className="relative">
-                                                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                                                <Input placeholder="Search materials by name or code..." className="pl-10 h-9" value={materialSearch} onChange={e => setMaterialSearch(e.target.value)} />
-                                            </div>
-                                            <span className="text-sm font-medium text-primary bg-primary/10 px-3 py-1 rounded-full">{filteredMaterials.length} results found</span>
+                            <div className="space-y-8 animate-in fade-in duration-500">
+                                <div className="flex items-center justify-between">
+                                    <h2 className="text-2xl font-bold flex items-center gap-3">
+                                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-sm font-black">2</div>
+                                        Select Materials/Items
+                                    </h2>
+                                    <div className="flex items-center gap-3">
+                                        <div className="relative w-64">
+                                            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                            <Input placeholder="Search materials..." className="pl-10 h-10 bg-muted/5 font-medium" value={materialSearch} onChange={e => setMaterialSearch(e.target.value)} />
                                         </div>
                                     </div>
-                                    <div className="rounded-xl border shadow-sm max-h-[450px] overflow-y-auto bg-white">
-                                        <Table>
-                                            <TableHeader className="sticky top-0 bg-muted/95 backdrop-blur-sm z-10 shadow-sm">
-                                                <TableRow>
-                                                    <TableHead className="w-[60px]"></TableHead>
-                                                    <TableHead className="font-bold">Material Name</TableHead>
-                                                    <TableHead className="font-bold">Unit</TableHead>
-                                                    <TableHead className="font-bold">Shop</TableHead>
-                                                    <TableHead className="text-right font-bold pr-6">Default Rate</TableHead>
-                                                </TableRow>
-                                            </TableHeader>
-                                            <TableBody>
-                                                {loadingMaterials ? (
-                                                    <TableRow><TableCell colSpan={5} className="text-center py-20"><Loader2 className="h-8 w-8 animate-spin mx-auto text-primary" /></TableCell></TableRow>
-                                                ) : filteredMaterials.length === 0 ? (
-                                                    <TableRow><TableCell colSpan={5} className="text-center py-20 text-muted-foreground italic">No materials found matching the current filters.</TableCell></TableRow>
-                                                ) : filteredMaterials.map(material => (
-                                                    <TableRow key={material.id} className={`hover:bg-muted/20 transition-colors cursor-pointer ${selectedMaterials.some(m => m.id === material.id) ? "bg-primary/5 hover:bg-primary/10" : ""}`}
-                                                        onClick={() => toggleMaterial(material)}>
-                                                        <TableCell onClick={e => e.stopPropagation()}><Checkbox checked={selectedMaterials.some(m => m.id === material.id)} onCheckedChange={() => toggleMaterial(material)} /></TableCell>
-                                                        <TableCell className="font-medium">{material.name}<div className="text-xs text-muted-foreground">Code: {material.code || material.id}</div></TableCell>
-                                                        <TableCell>{material.unit || "-"}</TableCell>
-                                                        <TableCell>{material.shop_name || "-"}</TableCell>
-                                                        <TableCell className="text-right pr-6 font-semibold">{material.rate ? `₹${material.rate.toLocaleString()}` : "-"}</TableCell>
-                                                    </TableRow>
-                                                ))}
-                                            </TableBody>
-                                        </Table>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                                    {/* Left Side: AVAILABLE MATERIALS (Now on Left) */}
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between px-2">
+                                            <h3 className="text-sm font-black uppercase tracking-widest text-slate-600 flex items-center gap-2">
+                                                <Layers className="h-4 w-4" /> Available Materials ({filteredMaterials.length})
+                                            </h3>
+                                            <span className="text-[10px] font-bold text-muted-foreground bg-muted px-2 py-0.5 rounded-full">Filtered View</span>
+                                        </div>
+                                        <div className="rounded-2xl border-2 border-slate-100 bg-white shadow-inner min-h-[450px] max-h-[600px] overflow-y-auto custom-scrollbar">
+                                            {loadingMaterials ? (
+                                                <div className="flex flex-col items-center justify-center h-[400px] space-y-4">
+                                                    <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                                                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Items...</p>
+                                                </div>
+                                            ) : filteredMaterials.length === 0 ? (
+                                                <div className="flex flex-col items-center justify-center h-[400px] text-center space-y-3 p-6 italic">
+                                                    <Search className="h-10 w-10 text-muted-foreground opacity-20" />
+                                                    <p className="text-sm font-medium text-muted-foreground">No matching materials found</p>
+                                                    <p className="text-[10px] text-muted-foreground/60">Try adjusting your filters or search term.</p>
+                                                </div>
+                                            ) : (
+                                                <div className="divide-y divide-slate-50">
+                                                    {filteredMaterials.map((material) => {
+                                                        const isSelected = selectedMaterials.some(m => m.id === material.id);
+                                                        return (
+                                                            <div key={material.id}
+                                                                onClick={() => toggleMaterial(material)}
+                                                                className={`p-4 flex items-center justify-between cursor-pointer transition-all hover:bg-slate-50 relative overflow-hidden group ${isSelected ? "opacity-40 grayscale-[0.5]" : ""}`}
+                                                            >
+                                                                {isSelected && <div className="absolute left-0 top-0 bottom-0 w-1 bg-primary" />}
+                                                                <div className="flex-1 min-w-0 pr-4">
+                                                                    <div className="flex items-center gap-2 mb-0.5">
+                                                                        <span className="font-bold text-slate-900 group-hover:text-primary transition-colors">{material.name}</span>
+                                                                        {isSelected && <Check className="h-3 w-3 text-primary animate-in zoom-in" />}
+                                                                    </div>
+                                                                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-muted-foreground font-medium uppercase tracking-tight">
+                                                                        <span>{material.unit}</span>
+                                                                        <span>•</span>
+                                                                        <span className="truncate max-w-[120px]">{material.shop_name || "Multiple Vendors"}</span>
+                                                                        <span>•</span>
+                                                                        <span className="text-slate-400 font-mono tracking-tighter">Code: {material.code || material.id?.slice(0, 8)}</span>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="text-right shrink-0">
+                                                                    <div className="text-xs font-black text-slate-800">₹{material.rate?.toLocaleString()}</div>
+                                                                    <div className={`text-[10px] font-bold mt-0.5 ${isSelected ? "text-primary" : "text-muted-foreground group-hover:text-primary"} transition-colors`}>
+                                                                        {isSelected ? "Added" : "+ Add to list"}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Right Side: SELECTED MATERIALS (Now on Right) */}
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between px-2">
+                                            <h3 className="text-sm font-black uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                                                <Check className="h-4 w-4" /> Selected Materials ({selectedMaterials.length})
+                                            </h3>
+                                            {selectedMaterials.length > 0 && (
+                                                <Button variant="ghost" size="sm" onClick={() => setSelectedMaterials([])} className="text-[10px] font-bold text-red-500 hover:text-red-600 hover:bg-red-50 h-7">Clear All</Button>
+                                            )}
+                                        </div>
+                                        <div className="rounded-2xl border-2 border-dashed border-blue-100 bg-blue-50/20 min-h-[450px] max-h-[600px] overflow-y-auto p-4 custom-scrollbar">
+                                            {selectedMaterials.length === 0 ? (
+                                                <div className="flex flex-col items-center justify-center h-[400px] text-center space-y-3 p-6">
+                                                    <div className="h-16 w-16 rounded-full bg-blue-50 flex items-center justify-center">
+                                                        <Plus className="h-8 w-8 text-blue-300" />
+                                                    </div>
+                                                    <p className="text-sm font-semibold text-blue-400">No materials selected yet</p>
+                                                    <p className="text-xs text-muted-foreground max-w-[200px]">Click on materials from the left panel to add them to your configuration.</p>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2">
+                                                    {selectedMaterials.map((material) => (
+                                                        <div key={material.id} className="flex items-center justify-between p-3 bg-white rounded-xl border-2 border-blue-100 shadow-sm hover:border-blue-300 transition-all group animate-in slide-in-from-right-4 duration-300">
+                                                            <div className="flex flex-col min-w-0 pr-4">
+                                                                <span className="font-bold text-slate-800 text-sm truncate">{material.name}</span>
+                                                                <div className="flex items-center gap-2 mt-0.5">
+                                                                    <Badge variant="outline" className="text-[9px] h-4 px-1 bg-blue-50/50 text-blue-600 font-bold border-blue-100">{material.unit}</Badge>
+                                                                    <span className="text-[10px] text-muted-foreground font-medium truncate">{material.shop_name}</span>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-2 shrink-0">
+                                                                <span className="text-xs font-black text-slate-700">₹{material.rate?.toLocaleString()}</span>
+                                                                <Button variant="ghost" size="sm" onClick={() => toggleMaterial(material)} className="h-8 w-8 p-0 text-red-400 hover:text-red-600 hover:bg-red-50 group-hover:scale-110 transition-transform">
+                                                                    <Trash2 className="h-4 w-4" />
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pt-6 mt-4 border-t">
-                                    <Button variant="outline" size="sm" onClick={() => setStep(step - 1)} className="w-full sm:w-auto px-6 h-10"><ArrowLeft className="mr-2 h-4 w-4" /> Back</Button>
-                                    <div className="flex items-center gap-4 w-full sm:w-auto">
-                                        <p className="text-xs font-bold text-muted-foreground whitespace-nowrap">{selectedMaterials.length} SELECTED</p>
-                                        <Button size="sm" onClick={nextStep} disabled={selectedMaterials.length === 0} className="w-full sm:w-auto px-6 h-10">Review Selection <ArrowRight className="ml-2 h-4 w-4" /></Button>
+
+                                <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pt-8 mt-4 border-t border-dashed">
+                                    <Button variant="outline" size="sm" onClick={() => setStep(step - 1)} className="w-full sm:w-auto px-8 h-10 border-slate-200 font-bold uppercase tracking-wide"><ArrowLeft className="mr-2 h-4 w-4" /> Back</Button>
+                                    <div className="flex items-center gap-6 w-full sm:w-auto">
+                                        <div className="flex flex-col items-end">
+                                            <p className="text-[10px] font-black tracking-widest text-muted-foreground uppercase leading-none mb-1">Total Selected</p>
+                                            <p className="text-sm font-black text-primary leading-none">{selectedMaterials.length} Items</p>
+                                        </div>
+                                        <Button size="sm" onClick={nextStep} disabled={selectedMaterials.length === 0} className="w-full sm:w-auto h-12 px-12 bg-primary hover:bg-primary/90 text-white font-black uppercase tracking-widest shadow-xl shadow-primary/20 transition-all hover:scale-[1.02]">
+                                            Continue <ArrowRight className="ml-2 h-4 w-4" />
+                                        </Button>
                                     </div>
                                 </div>
                             </div>

@@ -550,48 +550,52 @@ export function Sidebar() {
           )}
 
           {/* Approvals Section */}
-          {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
+          {(isAdminOrSoftwareOrPurchaseTeam || isProductManager) && !isPreSales && !isContractor && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Approvals
               </div>
-              <Link href="/admin/dashboard?tab=approvals">
-                <span
-                  className={cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                    currentAdminTab === "approvals"
-                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent",
-                  )}
-                  onClick={() => setIsOpen(false)}
-                >
-                  <ShieldAlert className="h-4 w-4" /> Shop Approvals
-                  {pendingShopCount > 0 && (
-                    <Badge variant="destructive" className="ml-auto">
-                      {pendingShopCount}
-                    </Badge>
-                  )}
-                </span>
-              </Link>
+              {!isProductManager && (
+                <Link href="/admin/dashboard?tab=approvals">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                      currentAdminTab === "approvals"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <ShieldAlert className="h-4 w-4" /> Shop Approvals
+                    {pendingShopCount > 0 && (
+                      <Badge variant="destructive" className="ml-auto">
+                        {pendingShopCount}
+                      </Badge>
+                    )}
+                  </span>
+                </Link>
+              )}
 
-              <Link href="/admin/dashboard?tab=material-approvals">
-                <span
-                  className={cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                    currentAdminTab === "material-approvals"
-                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent",
-                  )}
-                  onClick={() => setIsOpen(false)}
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Material Approvals
-                  {pendingMaterialCount > 0 && (
-                    <Badge variant="destructive" className="ml-auto">
-                      {pendingMaterialCount}
-                    </Badge>
-                  )}
-                </span>
-              </Link>
+              {!isProductManager && (
+                <Link href="/admin/dashboard?tab=material-approvals">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                      currentAdminTab === "material-approvals"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Material Approvals
+                    {pendingMaterialCount > 0 && (
+                      <Badge variant="destructive" className="ml-auto">
+                        {pendingMaterialCount}
+                      </Badge>
+                    )}
+                  </span>
+                </Link>
+              )}
 
 
               {/* Supplier approvals (admin only) */}
@@ -611,47 +615,48 @@ export function Sidebar() {
                 </Link>
               )}
 
-              {/* Product approvals (admin + software_team) */}
-              {isAdminOrSoftware && (
-                <>
-                  <Link href="/admin/product-approvals">
-                    <span
-                      className={cn(
-                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                        location === "/admin/product-approvals"
-                          ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                          : "text-sidebar-foreground hover:bg-sidebar-accent",
-                      )}
-                      onClick={() => setIsOpen(false)}
-                    >
-                      <FolderKanban className="h-4 w-4" /> Product Approvals
-                      {pendingProductCount > 0 && (
-                        <Badge variant="destructive" className="ml-auto">
-                          {pendingProductCount}
-                        </Badge>
-                      )}
-                    </span>
-                  </Link>
+              {/* Product approvals (admin + software_team + product_manager) */}
+              {(isAdminOrSoftware || isProductManager) && (
+                <Link href="/admin/product-approvals">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                      location === "/admin/product-approvals"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <FolderKanban className="h-4 w-4" /> Product Approvals
+                    {pendingProductCount > 0 && (
+                      <Badge variant="destructive" className="ml-auto">
+                        {pendingProductCount}
+                      </Badge>
+                    )}
+                  </span>
+                </Link>
+              )}
 
-                  <Link href="/admin/bom-approvals">
-                    <span
-                      className={cn(
-                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                        location === "/admin/bom-approvals"
-                          ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                          : "text-sidebar-foreground hover:bg-sidebar-accent",
-                      )}
-                      onClick={() => setIsOpen(false)}
-                    >
-                      <CheckCircle2 className="h-4 w-4" /> BOM Approvals
-                      {pendingBomCount > 0 && (
-                        <Badge variant="destructive" className="ml-auto">
-                          {pendingBomCount}
-                        </Badge>
-                      )}
-                    </span>
-                  </Link>
-                </>
+              {/* BOM approvals (admin + software_team) */}
+              {isAdminOrSoftware && (
+                <Link href="/admin/bom-approvals">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                      location === "/admin/bom-approvals"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> BOM Approvals
+                    {pendingBomCount > 0 && (
+                      <Badge variant="destructive" className="ml-auto">
+                        {pendingBomCount}
+                      </Badge>
+                    )}
+                  </span>
+                </Link>
               )}
             </>
           )}
