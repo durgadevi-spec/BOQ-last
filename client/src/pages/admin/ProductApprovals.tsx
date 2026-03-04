@@ -11,6 +11,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
 import { Loader2, CheckCircle2, XCircle, ChevronDown, ChevronUp, Edit, Save } from "lucide-react";
 import apiFetch from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -55,6 +63,14 @@ type ApprovalItem = {
   apply_wastage: boolean;
   shop_name: string;
 };
+
+const UNIT_OPTIONS = [
+  "Sqft", "Sqmt", "Length", "LS", "RFT", "RMT", "pcs", "kg", "meter", "cum",
+  "litre", "set", "nos", "Bags", "Running feet", "Running meter", "BOX", "LTR",
+  "CQM", "cft", "ml", "DOZ", "PKT", "Man labour", "Points", "Roll", "Days",
+  "Inches", "Hours", "Percentage", "Panel", "Drum", "Ft", "1 Pkt", "Job", "Units"
+].sort();
+
 
 export default function ProductApprovals() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -549,13 +565,19 @@ export default function ProductApprovals() {
                                     <div className="bg-white rounded-lg border p-3">
                                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Unit Type</p>
                                       {editingId === approval.id ? (
-                                        <select
+                                        <Select
                                           value={editForm.required_unit_type || "Sqft"}
-                                          onChange={e => setEditForm({ ...editForm, required_unit_type: e.target.value })}
-                                          className="w-full text-sm font-bold bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 h-6 mt-1"
+                                          onValueChange={(val) => setEditForm({ ...editForm, required_unit_type: val })}
                                         >
-                                          {["Sqft", "Sqmt", "Length", "LS", "RFT"].map(u => <option key={u} value={u}>{u}</option>)}
-                                        </select>
+                                          <SelectTrigger className="w-full text-sm font-bold bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 h-8 mt-1">
+                                            <SelectValue placeholder="Select Unit" />
+                                          </SelectTrigger>
+                                          <SelectContent className="max-h-60 overflow-y-auto">
+                                            {UNIT_OPTIONS.map(u => (
+                                              <SelectItem key={u} value={u}>{u}</SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
                                       ) : (
                                         <p className="font-bold text-sm">{approval.required_unit_type || "Sqft"}</p>
                                       )}

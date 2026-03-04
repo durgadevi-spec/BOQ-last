@@ -5681,15 +5681,19 @@ export async function registerRoutes(
 
           await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS apply_wastage BOOLEAN DEFAULT TRUE").catch(() => { });
           await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS shop_name VARCHAR(255)").catch(() => { });
+          await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS base_qty DECIMAL(10,4)").catch(() => { });
+          await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS wastage_qty DECIMAL(10,4)").catch(() => { });
+          await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS wastage_pct DECIMAL(10,4)").catch(() => { });
 
           for (const item of appItems) {
             await query(
-              `INSERT INTO step11_product_items (step11_product_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, apply_wastage, shop_name)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+              `INSERT INTO step11_product_items (step11_product_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, apply_wastage, shop_name, base_qty, wastage_pct)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
               [
                 step11Id, item.material_id, item.material_name, item.unit,
                 item.qty, item.rate, item.supply_rate, item.install_rate,
-                item.location, item.amount, item.apply_wastage, item.shop_name
+                item.location, item.amount, item.apply_wastage, item.shop_name,
+                item.base_qty, item.wastage_pct
               ]
             );
           }

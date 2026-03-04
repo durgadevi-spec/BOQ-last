@@ -28,7 +28,7 @@ type Product = { id: string; name: string; code: string; category?: string; subc
 type Step11Item = { id?: string; s_no?: number; title?: string; description?: string; unit?: string; qty?: number; supply_rate?: number; install_rate?: number;[key: string]: any };
 type BOMHistory = { id: string; version_id: string; user_id: string; user_full_name: string; action: string; reason?: string; created_at: string };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────
 
 const parseTableData = (raw: any): any => {
   if (typeof raw === "string") { try { return JSON.parse(raw); } catch { return {}; } }
