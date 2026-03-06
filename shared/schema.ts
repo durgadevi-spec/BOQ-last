@@ -181,10 +181,49 @@ export const step11ProductItems = pgTable("step11_product_items", {
   amount: decimal("amount", { precision: 15, scale: 2 }),
 });
 
+export const purchaseOrders = pgTable("purchase_orders", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  poNumber: text("po_number").notNull().unique(),
+  projectId: text("project_id").notNull(),
+  projectName: text("project_name"),
+  vendorId: text("vendor_id").notNull(), // maps to shop_id
+  vendorName: text("vendor_name"),
+  subtotal: decimal("subtotal", { precision: 15, scale: 2 }).notNull().default("0"),
+  tax: decimal("tax", { precision: 15, scale: 2 }).notNull().default("0"),
+  total: decimal("total", { precision: 15, scale: 2 }).notNull().default("0"),
+  // draft, pending_approval, approved, ordered, delivered, rejected
+  status: text("status").notNull().default("draft"),
+  requestedBy: text("requested_by"),
+  approvalComments: text("approval_comments"),
+  poDate: timestamp("po_date", { withTimezone: true }).default(sql`now()`),
+  deliveryDate: timestamp("delivery_date", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`),
+});
+
+export const purchaseOrderItems = pgTable("purchase_order_items", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  poId: uuid("po_id").notNull().references(() => purchaseOrders.id, { onDelete: 'cascade' }),
+  materialId: text("material_id"),
+  item: text("item").notNull(),
+  description: text("description"),
+  unit: text("unit"),
+  qty: decimal("qty", { precision: 10, scale: 2 }).notNull(),
+  rate: decimal("rate", { precision: 15, scale: 2 }).notNull(),
+  amount: decimal("amount", { precision: 15, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`),
+});
+
 export const insertStep11ProductSchema = createInsertSchema(step11Products);
 export const insertStep11ProductItemSchema = createInsertSchema(step11ProductItems);
+export const insertPurchaseOrderSchema = createInsertSchema(purchaseOrders);
+export const insertPurchaseOrderItemSchema = createInsertSchema(purchaseOrderItems);
 
 export type Step11Product = typeof step11Products.$inferSelect;
 export type InsertStep11Product = z.infer<typeof insertStep11ProductSchema>;
 export type Step11ProductItem = typeof step11ProductItems.$inferSelect;
 export type InsertStep11ProductItem = z.infer<typeof insertStep11ProductItemSchema>;
+export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
+export type InsertPurchaseOrder = z.infer<typeof insertPurchaseOrderSchema>;
+export type PurchaseOrderItem = typeof purchaseOrderItems.$inferSelect;
+export type InsertPurchaseOrderItem = z.infer<typeof insertPurchaseOrderItemSchema>;

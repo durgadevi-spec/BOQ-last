@@ -63,7 +63,7 @@ export default function Login() {
           setLocation("/software/dashboard");
           break;
         case "purchase_team":
-          setLocation("/purchase/dashboard");
+          setLocation("/admin/dashboard");
           break;
         case "supplier":
           setLocation("/supplier/dashboard");

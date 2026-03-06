@@ -143,6 +143,7 @@ export function linesFromTableData(tableData: any): MaterialLine[] {
             supplyRate: Number(l.supplyRate ?? l.supply_rate ?? 0),
             installRate: Number(l.installRate ?? l.install_rate ?? 0),
             shop_name: l.shop_name,
+            shop_id: l.shop_id || l.shopId,
             applyWastage: l.apply_wastage !== undefined ? Boolean(l.apply_wastage) : (l.applyWastage !== undefined ? Boolean(l.applyWastage) : true),
             description: l.description || l.technicalspecification || l.name,
             technicalspecification: l.technicalspecification
@@ -160,6 +161,8 @@ export function linesFromTableData(tableData: any): MaterialLine[] {
             wastagePct: undefined,
             supplyRate: Number(item.supply_rate ?? 0),
             installRate: Number(item.install_rate ?? 0),
+            shop_name: item.shop_name || item.shopName,
+            shop_id: item.shop_id || item.shopId
         }));
     }
     return [];

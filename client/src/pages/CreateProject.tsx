@@ -17,7 +17,8 @@ import {
   Trash2,
   ChevronRight,
   ChevronDown,
-  Briefcase
+  Briefcase,
+  Pencil
 } from "lucide-react";
 import apiFetch from "@/lib/api";
 
@@ -31,6 +32,8 @@ export default function CreateProject() {
   const [projectValue, setProjectValue] = useState("");
   const [templateProjectId, setTemplateProjectId] = useState<string>("none");
   const [selectedVersionId, setSelectedVersionId] = useState<string>("none");
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [editingProjectName, setEditingProjectName] = useState<string>("");
 
   const { toast } = useToast();
   const [projects, setProjects] = useState<any[]>([]);
@@ -186,6 +189,40 @@ export default function CreateProject() {
       toast({
         title: "Error",
         description: "Failed to delete project",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const saveProjectName = async (projectId: string) => {
+    if (!editingProjectName.trim()) return;
+    try {
+      const response = await apiFetch(`/api/boq-projects/${projectId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editingProjectName.trim() }),
+      });
+
+      if (response.ok) {
+        setProjects((p) =>
+          p.map((proj) =>
+            proj.id === projectId ? { ...proj, name: editingProjectName.trim() } : proj
+          )
+        );
+        setEditingProjectId(null);
+        toast({ title: "Success", description: "Project name updated" });
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to update project",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to update project:", err);
+      toast({
+        title: "Error",
+        description: "Failed to update project",
         variant: "destructive",
       });
     }
@@ -414,7 +451,38 @@ export default function CreateProject() {
                         </button>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-extrabold text-slate-800">{p.name}</span>
+                            {editingProjectId === p.id ? (
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  className="h-7 text-sm w-48 py-1"
+                                  value={editingProjectName}
+                                  onChange={(e) => setEditingProjectName(e.target.value)}
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') saveProjectName(p.id);
+                                    if (e.key === 'Escape') setEditingProjectId(null);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                                <Button size="sm" className="h-7 px-2 bg-indigo-600 hover:bg-indigo-700 text-white" onClick={(e) => { e.stopPropagation(); saveProjectName(p.id); }}>Save</Button>
+                                <Button size="sm" variant="ghost" className="h-7 px-2" onClick={(e) => { e.stopPropagation(); setEditingProjectId(null); }}>Cancel</Button>
+                              </div>
+                            ) : (
+                              <>
+                                <span className="font-extrabold text-slate-800">{p.name}</span>
+                                <button
+                                  className="text-slate-400 hover:text-indigo-600 transition-colors ml-1"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingProjectId(p.id);
+                                    setEditingProjectName(p.name);
+                                  }}
+                                  title="Edit Project Name"
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                              </>
+                            )}
                             <span className="bg-slate-100 text-slate-600 text-[9px] px-1.5 py-0.5 rounded font-bold border border-slate-200 uppercase tracking-tight">V{p.current_version || 1}</span>
                           </div>
                           <div className="text-[10px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5 mt-1">

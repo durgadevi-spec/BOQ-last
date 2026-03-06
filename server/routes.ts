@@ -456,6 +456,63 @@ export async function registerRoutes(
     );
   }
 
+  // Ensure purchase_orders table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS purchase_orders (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        po_number VARCHAR(100) NOT NULL UNIQUE,
+        project_id VARCHAR(100) NOT NULL,
+        project_name VARCHAR(255),
+        vendor_id VARCHAR(100) NOT NULL,
+        vendor_name VARCHAR(255),
+        subtotal DECIMAL(15,2) DEFAULT 0,
+        tax DECIMAL(15,2) DEFAULT 0,
+        total DECIMAL(15,2) DEFAULT 0,
+        status VARCHAR(50) DEFAULT 'draft',
+        requested_by VARCHAR(255),
+        approval_comments TEXT,
+        po_date TIMESTAMPTZ DEFAULT NOW(),
+        delivery_date TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_po_number ON purchase_orders(po_number)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_project_id ON purchase_orders(project_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_purchase_orders_vendor_id ON purchase_orders(vendor_id)`);
+    console.log("[db] purchase_orders table verified/created");
+  } catch (err: unknown) {
+    console.warn("[db] Could not create purchase_orders table:", (err as any)?.message || err);
+  }
+
+  // Ensure purchase_order_items table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS purchase_order_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        po_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+        material_id VARCHAR(100),
+        item VARCHAR(255) NOT NULL,
+        description TEXT,
+        unit VARCHAR(50),
+        qty DECIMAL(10,2) NOT NULL,
+        rate DECIMAL(15,2) NOT NULL,
+        amount DECIMAL(15,2) NOT NULL,
+        hsn_code VARCHAR(50),
+        sac_code VARCHAR(50),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_purchase_order_items_po_id ON purchase_order_items(po_id)`);
+    // Ensure hsn_code and sac_code columns exist (for upgrades from older schema)
+    await query(`ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS hsn_code VARCHAR(50)`);
+    await query(`ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS sac_code VARCHAR(50)`);
+    console.log("[db] purchase_order_items table verified/created");
+  } catch (err: unknown) {
+    console.warn("[db] Could not create purchase_order_items table:", (err as any)?.message || err);
+  }
+
   // Ensure boq_history table exists
   try {
     await query(`
@@ -1288,9 +1345,11 @@ export async function registerRoutes(
     try {
       // Only return materials that are approved for public listing
       const result = await query(
-        `SELECT m.*, s.name as shop_name 
+        `SELECT m.*, s.name as shop_name, 
+                mt.tax_code_type, mt.tax_code_value 
          FROM materials m 
          LEFT JOIN shops s ON m.shop_id = s.id 
+         LEFT JOIN material_templates mt ON m.template_id = mt.id 
          WHERE m.approved IS TRUE 
          ORDER BY m.created_at DESC`,
       );
@@ -1602,9 +1661,11 @@ export async function registerRoutes(
     try {
       const id = req.params.id;
       const result = await query(
-        `SELECT m.*, s.name as shop_name 
+        `SELECT m.*, s.name as shop_name, 
+                mt.tax_code_type, mt.tax_code_value 
          FROM materials m 
          LEFT JOIN shops s ON m.shop_id = s.id 
+         LEFT JOIN material_templates mt ON m.template_id = mt.id 
          WHERE m.id = $1`,
         [id],
       );
@@ -1945,7 +2006,7 @@ export async function registerRoutes(
     requireRole("admin", "software_team", "purchase_team"),
     async (req: Request, res: Response) => {
       try {
-        const { name, code, category, subcategory, vendorCategory, taxCodeType, taxCodeValue } = req.body;
+        const { name, code, category, subcategory, vendorCategory, taxCodeType, taxCodeValue, technicalspecification } = req.body;
 
         if (!name || !name.trim()) {
           res.status(400).json({ message: "Template name is required" });
@@ -1959,10 +2020,10 @@ export async function registerRoutes(
 
         const id = randomUUID();
         const result = await query(
-          `INSERT INTO material_templates (id, name, code, category, subcategory, vendor_category, tax_code_type, tax_code_value, created_at, updated_at) 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW()) 
+          `INSERT INTO material_templates (id, name, code, category, subcategory, vendor_category, tax_code_type, tax_code_value, technicalspecification, created_at, updated_at) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()) 
          RETURNING *`,
-          [id, name.trim(), code.trim(), category || null, subcategory || null, vendorCategory || null, taxCodeType || null, taxCodeValue || null],
+          [id, name.trim(), code.trim(), category || null, subcategory || null, vendorCategory || null, taxCodeType || null, taxCodeValue || null, technicalspecification || null],
         );
 
         res.status(201).json({ template: result.rows[0] });
@@ -1984,7 +2045,7 @@ export async function registerRoutes(
         console.log('[PUT /api/material-templates/:id] user:', (req as any).user);
         console.log('[PUT /api/material-templates/:id] params.id:', req.params.id);
         console.log('[PUT /api/material-templates/:id] body:', req.body);
-        const { name, code, category, subcategory, vendorCategory, taxCodeType, taxCodeValue, vendor_category, tax_code_type, tax_code_value } = req.body;
+        const { name, code, category, subcategory, vendorCategory, taxCodeType, taxCodeValue, technicalspecification, vendor_category, tax_code_type, tax_code_value } = req.body;
 
         // Only update fields that are provided
         const fields: string[] = [];
@@ -2019,6 +2080,10 @@ export async function registerRoutes(
           fields.push(`tax_code_value = $${idx++}`);
           vals.push((taxCodeValue !== undefined ? taxCodeValue : tax_code_value) || null);
         }
+        if (technicalspecification !== undefined) {
+          fields.push(`technicalspecification = $${idx++}`);
+          vals.push(technicalspecification || null);
+        }
 
         if (fields.length === 0) {
           res.status(400).json({ message: "No fields to update" });
@@ -2049,6 +2114,8 @@ export async function registerRoutes(
           if (updated.code) { cascadeFields.push(`code = $${ci++}`); cascadeVals.push(updated.code); }
           if (updated.category !== undefined) { cascadeFields.push(`category = $${ci++}`); cascadeVals.push(updated.category); }
           if (updated.subcategory !== undefined) { cascadeFields.push(`subcategory = $${ci++}`); cascadeVals.push(updated.subcategory); }
+          if (updated.technicalspecification !== undefined) { cascadeFields.push(`technicalspecification = $${ci++}`); cascadeVals.push(updated.technicalspecification); }
+
 
           if (cascadeFields.length > 0) {
             cascadeVals.push(id);
@@ -2795,12 +2862,6 @@ export async function registerRoutes(
           [subName]
         );
 
-        // Update products to be uncategorized for this subcategory
-        await query(
-          "UPDATE products SET subcategory = NULL WHERE subcategory = $1",
-          [subName]
-        );
-
         // Simply delete the subcategory record from lookup table
         const result = await query(
           "DELETE FROM material_subcategories WHERE id = $1 RETURNING id",
@@ -2812,7 +2873,7 @@ export async function registerRoutes(
           return;
         }
 
-        res.json({ message: "Subcategory deleted successfully (materials and products uncategorized)" });
+        res.json({ message: "Subcategory deleted successfully (materials uncategorized)" });
       } catch (err: any) {
         console.error("/api/subcategories DELETE error:", {
           message: err.message,
@@ -2878,15 +2939,6 @@ export async function registerRoutes(
         );
         console.log("Deleted subcategories records:", subcatsResult.rowCount);
 
-        // Update products to be uncategorized for this category
-        console.log("Uncategorizing products for category:", name);
-        // Products only store subcategory, we need to find products whose subcategory belongs to this category
-        const productsUpdateResult = await query(
-          "UPDATE products SET subcategory = NULL WHERE subcategory IN (SELECT name FROM material_subcategories WHERE category = $1)",
-          [name]
-        );
-        console.log("Updated products (uncategorized):", productsUpdateResult.rowCount);
-
         // Delete the category record itself
         console.log("Deleting category record:", name);
         const result = await query(
@@ -2903,7 +2955,7 @@ export async function registerRoutes(
           return res.status(404).json({ message: "Category not found" });
         }
 
-        res.json({ message: "Category deleted (materials, templates and products uncategorized)", category: result.rows[0] });
+        res.json({ message: "Category deleted (materials and templates uncategorized)", category: result.rows[0] });
       } catch (err) {
         console.error("/api/categories/:name DELETE error", err);
         res.status(500).json({ message: "failed to delete category" });
@@ -3602,17 +3654,27 @@ export async function registerRoutes(
     async (req: Request, res: Response) => {
       try {
         const { projectId } = req.params;
-        const { status } = req.body;
+        const { status, name } = req.body;
 
-        if (!status || !["draft", "submitted", "finalized"].includes(status)) {
-          res.status(400).json({ message: "Invalid status" });
-          return;
+        if (name !== undefined) {
+          if (!name.trim()) {
+            res.status(400).json({ message: "Project name cannot be empty" });
+            return;
+          }
+          await query(
+            `UPDATE boq_projects SET name = $1, updated_at = NOW() WHERE id = $2`,
+            [name.trim(), projectId],
+          );
+        } else if (status) {
+          if (!["draft", "submitted", "finalized"].includes(status)) {
+            res.status(400).json({ message: "Invalid status" });
+            return;
+          }
+          await query(
+            `UPDATE boq_projects SET status = $1, updated_at = NOW() WHERE id = $2`,
+            [status, projectId],
+          );
         }
-
-        await query(
-          `UPDATE boq_projects SET status = $1, updated_at = NOW() WHERE id = $2`,
-          [status, projectId],
-        );
 
         res.json({ message: "Project updated" });
       } catch (err) {
@@ -3997,8 +4059,11 @@ export async function registerRoutes(
     requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
     async (_req: Request, res: Response) => {
       try {
+        // Ensure is_cleared column exists
+        await query("ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS is_cleared BOOLEAN DEFAULT FALSE");
+
         const result = await query(
-          "SELECT * FROM boq_versions WHERE status != 'draft' AND created_at >= '2026-03-02 00:00:00' ORDER BY created_at DESC"
+          "SELECT * FROM boq_versions WHERE status != 'draft' AND (is_cleared IS FALSE OR is_cleared IS NULL) AND created_at >= '2026-03-02 00:00:00' ORDER BY created_at DESC"
         );
         res.json({ approvals: result.rows });
       } catch (err) {
@@ -4069,6 +4134,43 @@ export async function registerRoutes(
       } catch (err) {
         console.error("POST /api/bom-approvals/:id/reject error:", err);
         res.status(500).json({ message: "Failed to reject BOM version" });
+      }
+    }
+  );
+
+  // POST /api/bom-approvals/:id/clear - Mark a BOM as cleared (hidden)
+  app.post(
+    "/api/bom-approvals/:id/clear",
+    authMiddleware,
+    requireRole("admin", "software_team"),
+    async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        await query("UPDATE boq_versions SET is_cleared = TRUE WHERE id = $1", [id]);
+        res.json({ message: "BOM version cleared successfully" });
+      } catch (err) {
+        console.error("POST /api/bom-approvals/:id/clear error:", err);
+        res.status(500).json({ message: "Failed to clear BOM version" });
+      }
+    }
+  );
+
+  // POST /api/bom-approvals/bulk-clear - Mark multiple BOMs as cleared
+  app.post(
+    "/api/bom-approvals/bulk-clear",
+    authMiddleware,
+    requireRole("admin", "software_team"),
+    async (req: Request, res: Response) => {
+      try {
+        const { ids } = req.body;
+        if (!Array.isArray(ids) || ids.length === 0) {
+          return res.status(400).json({ message: "No IDs provided" });
+        }
+        await query("UPDATE boq_versions SET is_cleared = TRUE WHERE id = ANY($1)", [ids]);
+        res.json({ message: `${ids.length} BOM(s) cleared successfully` });
+      } catch (err) {
+        console.error("POST /api/bom-approvals/bulk-clear error:", err);
+        res.status(500).json({ message: "Failed to bulk clear BOM versions" });
       }
     }
   );
@@ -5443,6 +5545,43 @@ export async function registerRoutes(
     }
   );
 
+  // PUT /api/step11-products/config/:id - Update configuration name (rename)
+  app.put(
+    "/api/step11-products/config/:id",
+    authMiddleware,
+    requireRole("admin", "software_team", "purchase_team", "product_manager", "pre_sales"),
+    async (req: Request, res: Response) => {
+      const { id } = req.params;
+      const { config_name } = req.body || {};
+      if (!config_name || typeof config_name !== "string") {
+        res.status(400).json({ message: "Invalid config_name" });
+        return;
+      }
+
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      try {
+        let result;
+        if (isUuid) {
+          // Permanent Step 11 configuration
+          result = await query("UPDATE step11_products SET config_name = $1, updated_at = NOW() WHERE id = $2", [config_name, id]);
+        } else {
+          // Step 3 Draft configuration (ID is integer)
+          result = await query("UPDATE product_step3_config SET config_name = $1, updated_at = NOW() WHERE id = $2", [config_name, id]);
+        }
+
+        if (result.rowCount === 0) {
+          res.status(404).json({ message: "Configuration not found" });
+          return;
+        }
+
+        res.json({ message: "Configuration renamed successfully", config_name });
+      } catch (err) {
+        console.error("PUT /api/step11-products/config/:id error", err);
+        res.status(500).json({ message: "Failed to rename configuration" });
+      }
+    }
+  );
+
   // ====== GLOBAL SETTINGS ROUTES ======
 
   app.get("/api/global-settings", authMiddleware, async (_req, res) => {
@@ -5681,19 +5820,15 @@ export async function registerRoutes(
 
           await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS apply_wastage BOOLEAN DEFAULT TRUE").catch(() => { });
           await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS shop_name VARCHAR(255)").catch(() => { });
-          await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS base_qty DECIMAL(10,4)").catch(() => { });
-          await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS wastage_qty DECIMAL(10,4)").catch(() => { });
-          await query("ALTER TABLE step11_product_items ADD COLUMN IF NOT EXISTS wastage_pct DECIMAL(10,4)").catch(() => { });
 
           for (const item of appItems) {
             await query(
-              `INSERT INTO step11_product_items (step11_product_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, apply_wastage, shop_name, base_qty, wastage_pct)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+              `INSERT INTO step11_product_items (step11_product_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, apply_wastage, shop_name)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
               [
                 step11Id, item.material_id, item.material_name, item.unit,
                 item.qty, item.rate, item.supply_rate, item.install_rate,
-                item.location, item.amount, item.apply_wastage, item.shop_name,
-                item.base_qty, item.wastage_pct
+                item.location, item.amount, item.apply_wastage, item.shop_name
               ]
             );
           }
@@ -5738,73 +5873,6 @@ export async function registerRoutes(
     }
   );
 
-  // PUT /api/product-approvals/:id - Update an approval request (Admin only)
-  app.put(
-    "/api/product-approvals/:id",
-    authMiddleware,
-    requireRole("admin", "software_team"),
-    async (req: Request, res: Response) => {
-      const { id } = req.params;
-      const {
-        configName, totalCost, items, requiredUnitType, baseRequiredQty,
-        wastagePctDefault, dimA, dimB, dimC, description
-      } = req.body;
-
-      try {
-        await query("BEGIN");
-        try {
-          // Update the main approval record
-          const updateResult = await query(
-            `UPDATE product_approvals SET 
-              config_name = $1, total_cost = $2, required_unit_type = $3, 
-              base_required_qty = $4, wastage_pct_default = $5, dim_a = $6, 
-              dim_b = $7, dim_c = $8, description = $9, updated_at = NOW()
-            WHERE id = $10 RETURNING id`,
-            [
-              configName, totalCost, requiredUnitType, baseRequiredQty,
-              wastagePctDefault, dimA, dimB, dimC, description, id
-            ]
-          );
-
-          if (updateResult.rows.length === 0) {
-            await query("ROLLBACK");
-            res.status(404).json({ message: "Approval request not found" });
-            return;
-          }
-
-          // Update items: delete and recreate is simpler than matching IDs
-          if (items && Array.isArray(items)) {
-            await query("DELETE FROM product_approval_items WHERE approval_id = $1", [id]);
-            for (const item of items) {
-              await query(
-                `INSERT INTO product_approval_items
-                 (approval_id, material_id, material_name, unit, qty, rate, supply_rate, install_rate, location, amount, base_qty, wastage_pct, apply_wastage, shop_name)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-                [
-                  id, item.material_id || item.materialId, item.material_name || item.materialName,
-                  item.unit, item.qty, item.rate, item.supply_rate || item.supplyRate,
-                  item.install_rate || item.installRate, item.location, item.amount,
-                  item.base_qty || item.baseQty, item.wastage_pct || item.wastagePct,
-                  item.apply_wastage !== undefined ? item.apply_wastage : (item.applyWastage !== undefined ? item.applyWastage : true),
-                  item.shop_name || item.shopName || null
-                ]
-              );
-            }
-          }
-
-          await query("COMMIT");
-          res.json({ message: "Approval request updated successfully" });
-        } catch (err) {
-          await query("ROLLBACK");
-          throw err;
-        }
-      } catch (err) {
-        console.error("PUT /api/product-approvals/:id error:", err);
-        res.status(500).json({ message: "Failed to update approval request" });
-      }
-    }
-  );
-
   // DELETE /api/product-approvals/:id - Delete an approval request and its items
   app.delete(
     "/api/product-approvals/:id",
@@ -5835,6 +5903,376 @@ export async function registerRoutes(
       }
     }
   );
+  // POST /api/product-approvals/bulk-delete - Delete multiple approval requests
+  app.post(
+    "/api/product-approvals/bulk-delete",
+    authMiddleware,
+    requireRole("admin", "software_team"),
+    async (req: Request, res: Response) => {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ message: "No IDs provided" });
+      }
+      try {
+        await query("BEGIN");
+        try {
+          // remove child items first
+          await query("DELETE FROM product_approval_items WHERE approval_id = ANY($1)", [ids]);
+          await query("DELETE FROM product_approvals WHERE id = ANY($1)", [ids]);
+          await query("COMMIT");
+          res.json({ message: `${ids.length} approval request(s) deleted` });
+        } catch (err) {
+          await query("ROLLBACK");
+          throw err;
+        }
+      } catch (err) {
+        console.error("POST /api/product-approvals/bulk-delete error:", err);
+        res.status(500).json({ message: "Failed to delete approval requests" });
+      }
+    }
+  );
+
+  // ==================== PURCHASE ORDER ROUTES ====================
+
+  // GET /api/purchase-orders/preview-vendors - Find unique vendors for a BOM version
+  app.get("/api/purchase-orders/preview-vendors", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { versionId } = req.query;
+      if (!versionId) return res.status(400).json({ message: "versionId is required" });
+
+      const itemsResult = await query(
+        `SELECT table_data FROM boq_items WHERE version_id = $1`,
+        [versionId]
+      );
+
+      const shopNames = new Set();
+
+      // Helper: recursively extract shop_name from items and their nested step11_items
+      function extractShopNames(items) {
+        for (const item of items) {
+          const name = item.shop_name || item.shopName;
+          if (name && typeof name === "string" && name.trim().length > 0) {
+            shopNames.add(name.trim());
+          }
+          // Drill into nested step11_items (consolidated products)
+          if (Array.isArray(item.step11_items)) {
+            extractShopNames(item.step11_items);
+          }
+        }
+      }
+
+      for (const row of itemsResult.rows) {
+        const td = parseSafeTableData(row.table_data);
+        // For engine-based products, prioritize materialLines (they have shop_name)
+        if (Array.isArray(td.materialLines) && td.targetRequiredQty !== undefined) {
+          extractShopNames(td.materialLines);
+        }
+        if (Array.isArray(td.step11_items)) extractShopNames(td.step11_items);
+        if (Array.isArray(td.materialLines)) extractShopNames(td.materialLines);
+        if (Array.isArray(td.items)) extractShopNames(td.items);
+        if (Array.isArray(td.rows)) extractShopNames(td.rows);
+      }
+
+      if (shopNames.size === 0) {
+        return res.json({ vendors: [] });
+      }
+
+      const shopNamesArr = Array.from(shopNames);
+      const shopsResult = await query(
+        `SELECT id, name, location FROM shops WHERE TRIM(name) = ANY($1::text[])`,
+        [shopNamesArr]
+      );
+
+      // For shop names with no matching shop record, create placeholder entries
+      const foundNames = new Set(shopsResult.rows.map((r) => r.name.trim()));
+      const placeholders = shopNamesArr
+        .filter(n => !foundNames.has(n))
+        .map(n => ({ id: null, name: n, location: null }));
+
+      res.json({ vendors: [...shopsResult.rows, ...placeholders] });
+    } catch (err) {
+      console.error("GET /api/purchase-orders/preview-vendors error", err);
+      res.status(500).json({ message: "Failed to preview vendors" });
+    }
+  });
+
+
+  // POST /api/purchase-orders/generate
+  app.post(
+    "/api/purchase-orders/generate",
+    authMiddleware,
+    async (req: Request, res: Response) => {
+      try {
+        const { projectId, versionId } = req.body;
+        if (!projectId || !versionId) {
+          return res
+            .status(400)
+            .json({ message: "Project ID and Version ID are required" });
+        }
+
+        // 1. Get BOM items for this version
+        const itemsResult = await query(
+          "SELECT * FROM boq_items WHERE project_id = $1 AND version_id = $2",
+          [projectId, versionId],
+        );
+
+        if (itemsResult.rowCount === 0) {
+          return res.status(404).json({ message: "No items found for this BOM version" });
+        }
+
+        // 2. Extract lines from each item's table_data and group by vendor (shop_id)
+        const vendorGroups: Record<string, any[]> = {};
+
+        // Helper: flatten all material lines including those nested inside consolidated products
+        function flattenItems(items: any[]): any[] {
+          const result: any[] = [];
+          for (const item of items) {
+            // If this item has nested step11_items (consolidated product), drill in
+            if (Array.isArray(item.step11_items) && item.step11_items.length > 0) {
+              result.push(...flattenItems(item.step11_items));
+            } else {
+              result.push(item);
+            }
+          }
+          return result;
+        }
+
+        for (const boqItem of itemsResult.rows) {
+          const tableData = parseSafeTableData(boqItem.table_data);
+
+          let lines: any[] = [];
+          // For engine-based products (with materialLines + targetRequiredQty),
+          // prioritize materialLines because they contain shop_name.
+          // step11_items in engine-based products are raw recipe items without shop_name.
+          if (Array.isArray(tableData.materialLines) && tableData.targetRequiredQty !== undefined) {
+            lines = flattenItems(tableData.materialLines);
+          } else if (Array.isArray(tableData.step11_items)) {
+            lines = flattenItems(tableData.step11_items);
+          } else if (Array.isArray(tableData.materialLines)) {
+            lines = flattenItems(tableData.materialLines);
+          } else if (Array.isArray(tableData.rows)) {
+            lines = flattenItems(tableData.rows);
+          } else if (Array.isArray(tableData.items)) {
+            lines = flattenItems(tableData.items);
+          }
+
+          for (const line of lines) {
+            const vendorName = (line.shop_name || line.shopName || "unassigned").trim();
+            if (!vendorGroups[vendorName]) {
+              vendorGroups[vendorName] = [];
+            }
+            vendorGroups[vendorName].push({
+              ...line,
+              boq_item_id: boqItem.id,
+            });
+          }
+        }
+
+
+        const generatedPos = [];
+
+        // 3. For each vendor group, create a PO
+        for (const [vendorName, items] of Object.entries(vendorGroups)) {
+          if (vendorName === "unassigned") continue;
+
+          const poNumber = `PO-${Math.floor(1000 + Math.random() * 9000)}-${Date.now().toString().slice(-4)}`;
+          let totalAmount = 0;
+
+          // Look up vendor's UUID by name
+          const shopLookup = await query(
+            `SELECT id FROM shops WHERE TRIM(name) = $1 LIMIT 1`,
+            [vendorName]
+          );
+          const vendorId = shopLookup.rows.length > 0 ? shopLookup.rows[0].id : vendorName;
+
+          // Create the PO first to get an ID
+          const poResult = await query(
+            `INSERT INTO purchase_orders (po_number, project_id, vendor_id, vendor_name, status, total) 
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+            [poNumber, projectId, vendorId, vendorName, "draft", 0],
+          );
+
+
+          const poId = poResult.rows[0].id;
+
+          // Insert items
+          for (const item of items) {
+            const qty = parseFloat(item.qty || item.quantity || 0) || 0;
+            const supplyRate = parseFloat(item.supply_rate || item.supplyRate || item.rate || 0) || 0;
+            const installRate = parseFloat(item.install_rate || item.installRate || 0) || 0;
+            const rate = supplyRate + installRate;
+            const amount = parseFloat(item.amount || 0) || (qty * rate) || 0;
+            totalAmount += amount;
+
+            await query(
+              `INSERT INTO purchase_order_items (po_id, item, description, unit, qty, rate, amount, hsn_code, sac_code) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+              [
+                poId,
+                item.item || item.material_name || item.title || item.name || "Unknown Item",
+                item.description || item.location || null,
+                item.unit || null,
+                qty,
+                rate,
+                amount,
+                item.hsn_code || item.hsn_sac_code || null,
+                item.sac_code || null
+              ],
+            );
+          }
+
+          // Update PO with total amount
+          await query("UPDATE purchase_orders SET total = $1 WHERE id = $2", [
+            totalAmount,
+            poId,
+          ]);
+
+          generatedPos.push({ id: poId, poNumber, vendorId, totalAmount });
+        }
+
+        res.json({
+          message: "Purchase orders generated successfully",
+          generatedCount: generatedPos.length,
+          orders: generatedPos,
+        });
+      } catch (err) {
+        console.error("POST /api/purchase-orders/generate error", err);
+        res.status(500).json({ message: "Failed to generate POs" });
+      }
+    },
+  );
+
+  // Helper to parse table data safely
+  function parseSafeTableData(raw: any) {
+    if (typeof raw === "string") {
+      try { return JSON.parse(raw); } catch { return {}; }
+    }
+    return raw || {};
+  }
+
+  // GET /api/purchase-orders - List all purchase orders (with optional status filter)
+  app.get("/api/purchase-orders", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { status } = req.query;
+      let queryStr = `
+        SELECT po.*, po.total as total_amount, p.name as project_name, 
+               COALESCE(po.vendor_name, s.name, po.vendor_id) as vendor_name
+        FROM purchase_orders po
+        LEFT JOIN boq_projects p ON po.project_id = p.id
+        LEFT JOIN shops s ON (po.vendor_id::text = s.id::text OR TRIM(s.name) = TRIM(po.vendor_name))
+      `;
+      const params: any[] = [];
+
+      if (status) {
+        queryStr += ` WHERE po.status = $1`;
+        params.push(status);
+      }
+
+      queryStr += ` ORDER BY po.created_at DESC`;
+
+      const result = await query(queryStr, params);
+      res.json({ purchaseOrders: result.rows });
+    } catch (err) {
+      console.error("GET /api/purchase-orders error:", err);
+      res.status(500).json({ message: "Failed to load purchase orders" });
+    }
+  });
+
+  // GET /api/purchase-orders/:id - Get a single purchase order and its items
+  app.get("/api/purchase-orders/:id", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      // Fetch the PO header with detailed shop information
+      const poResult = await query(
+        `SELECT po.*, po.total as total_amount, 
+                p.name as project_name, p.client as project_client, p.location as project_location, 
+                COALESCE(po.vendor_name, s.name, po.vendor_id) as vendor_name, 
+                s.location as vendor_location, s.city as vendor_city, 
+                s.state as vendor_state, s.pincode as vendor_pincode, s.gstno as vendor_gstin,
+                s.contactnumber as vendor_phone, s.phonecountrycode as vendor_phone_code
+         FROM purchase_orders po
+         LEFT JOIN boq_projects p ON po.project_id = p.id
+         LEFT JOIN shops s ON (po.vendor_id::text = s.id::text OR TRIM(s.name) = TRIM(po.vendor_name))
+         WHERE po.id = $1`,
+        [id]
+      );
+
+      if (poResult.rows.length === 0) {
+        res.status(404).json({ message: "Purchase order not found" });
+        return;
+      }
+
+      // Fetch the PO items
+      const itemsResult = await query(
+        `SELECT * FROM purchase_order_items WHERE po_id = $1 ORDER BY created_at ASC`,
+        [id]
+      );
+
+      res.json({
+        purchaseOrder: poResult.rows[0],
+        items: itemsResult.rows
+      });
+    } catch (err) {
+      console.error("GET /api/purchase-orders/:id error:", err);
+      res.status(500).json({ message: "Failed to load purchase order details" });
+    }
+  });
+
+  // PATCH /api/purchase-orders/:id/status - Update purchase order status
+  app.patch("/api/purchase-orders/:id/status", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body;
+
+      if (!status) {
+        res.status(400).json({ message: "Status is required" });
+        return;
+      }
+
+      const result = await query(
+        `UPDATE purchase_orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [status, id]
+      );
+
+      if (result.rows.length === 0) {
+        res.status(404).json({ message: "Purchase order not found" });
+        return;
+      }
+
+      res.json({ purchaseOrder: result.rows[0] });
+    } catch (err) {
+      console.error("PATCH /api/purchase-orders/:id/status error:", err);
+      res.status(500).json({ message: "Failed to update purchase order status" });
+    }
+  });
+
+  // POST /api/purchase-orders/:id/approve - Approve or reject a purchase order
+  app.post("/api/purchase-orders/:id/approve", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { approve, comment } = req.body;
+
+      const status = approve ? 'approved' : 'rejected';
+
+      const result = await query(
+        `UPDATE purchase_orders 
+         SET status = $1, approval_comments = $2, updated_at = NOW() 
+         WHERE id = $3 RETURNING *`,
+        [status, comment || null, id]
+      );
+
+      if (result.rows.length === 0) {
+        res.status(404).json({ message: "Purchase order not found" });
+        return;
+      }
+
+      res.json({ message: `Purchase order ${status} successfully`, purchaseOrder: result.rows[0] });
+    } catch (err) {
+      console.error("POST /api/purchase-orders/:id/approve error:", err);
+      res.status(500).json({ message: "Failed to process purchase order approval" });
+    }
+  });
 
   return httpServer;
 }

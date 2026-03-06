@@ -43,6 +43,11 @@ import SupplierMaterials from "@/pages/supplier/SupplierMaterials";
 import SupplierShops from "@/pages/supplier/SupplierShops";
 import { SupplierSupport } from "@/pages/supplier/SupplierSupport";
 
+import PurchaseOrders from "@/pages/PurchaseOrders";
+import PurchaseOrderDetail from "@/pages/PurchaseOrderDetail";
+import POApprovals from "@/pages/POApprovals";
+import DeliveryTracker from "@/pages/DeliveryTracker";
+
 function Router() {
   return (
     <Switch>
@@ -71,6 +76,12 @@ function Router() {
       <Route path="/finalize-bom" component={FinalizeBoq} />
       <Route path="/project-dashboard" component={ProjectDashboard} />
       <Route path="/bom-review" component={BoqReview} />
+
+      {/* ================= PROCUREMENT ================= */}
+      <Route path="/purchase-orders" component={PurchaseOrders} />
+      <Route path="/purchase-orders/:id" component={PurchaseOrderDetail} />
+      <Route path="/po-approvals" component={POApprovals} />
+      <Route path="/delivery-tracker" component={DeliveryTracker} />
 
 
       <Route path="/admin/dashboard" component={AdminDashboard} />

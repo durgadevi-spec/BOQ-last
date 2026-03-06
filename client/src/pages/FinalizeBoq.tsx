@@ -1008,6 +1008,28 @@ export default function FinalizeBoq() {
 
       if (response.ok) {
         const newItem = await response.json();
+        const td = newItem.table_data;
+
+        // Initialize local state for the new item
+        if (Array.isArray(td.finalize_columns)) {
+          setCustomColumns(prev => ({ ...prev, [newItem.id]: td.finalize_columns }));
+        }
+        if (td.finalize_column_values) {
+          setCustomColumnValues(prev => ({ ...prev, [newItem.id]: td.finalize_column_values }));
+        }
+        if (td.finalize_description) {
+          setProductDescriptions(prev => ({ ...prev, [newItem.id]: td.finalize_description }));
+        }
+        if (td.finalize_qty !== undefined) {
+          setProductQuantities(prev => ({ ...prev, [newItem.id]: String(td.finalize_qty) }));
+        }
+        if (td.finalize_unit) {
+          setProductUnits(prev => ({ ...prev, [newItem.id]: td.finalize_unit }));
+        }
+        if (td.finalize_override_rate) {
+          setOverrideRates(prev => ({ ...prev, [newItem.id]: String(td.finalize_override_rate) }));
+        }
+
         setBoqItems(prev => [...prev, newItem]);
         setShowFinalizedPicker(false);
         toast({ title: "Success", description: "Added finalized item" });
@@ -2668,9 +2690,9 @@ export default function FinalizeBoq() {
                                   rowCalculatedValues[col.name] = valNum;
                                   accumulator += valNum;
                                   const savedVal = customColumnValues[boqItem.id]?.[0]?.[col.name];
-                                  const displayVal = (savedVal !== undefined && savedVal !== null && savedVal !== "")
-                                    ? String(savedVal)
-                                    : (isCalculated ? valNum.toFixed(2) : "");
+                                  const displayVal = isCalculated
+                                    ? valNum.toFixed(2)
+                                    : ((savedVal !== undefined && savedVal !== null && savedVal !== "") ? String(savedVal) : "");
                                   const itemMultiplier = (itemCol as any).percentageValue || 0;
                                   const itemOp = (itemCol as any).operator || "%";
 

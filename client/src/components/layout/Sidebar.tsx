@@ -26,6 +26,9 @@ import {
   Users,
   Tags,
   FolderKanban,
+  Truck,
+  FileText,
+  ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -549,6 +552,47 @@ export function Sidebar() {
             </>
           )}
 
+          {/* Procurement Section */}
+          {(isAdminOrSoftware) && (
+            <>
+              <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Procurement
+              </div>
+              <Link href="/purchase-orders">
+                <span
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                    location === "/purchase-orders"
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent",
+                  )}
+                  onClick={() => setIsOpen(false)}
+                >
+                  <FileText className="h-4 w-4" /> Purchase Orders
+                  <Badge variant="outline" className="ml-auto text-[9px] px-1 py-0 h-3.5 border-amber-200 bg-amber-50 text-amber-700 font-medium tracking-wide leading-none flex items-center">
+                    Under Const.
+                  </Badge>
+                </span>
+              </Link>
+              <Link href="/po-approvals">
+                <span
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                    location === "/po-approvals"
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent",
+                  )}
+                  onClick={() => setIsOpen(false)}
+                >
+                  <ClipboardCheck className="h-4 w-4" /> PO Approvals
+                  <Badge variant="outline" className="ml-auto text-[9px] px-1 py-0 h-3.5 border-amber-200 bg-amber-50 text-amber-700 font-medium tracking-wide leading-none flex items-center">
+                    Under Const.
+                  </Badge>
+                </span>
+              </Link>
+            </>
+          )}
+
           {/* Approvals Section */}
           {(isAdminOrSoftwareOrPurchaseTeam || isProductManager) && !isPreSales && !isContractor && (
             <>
@@ -762,7 +806,7 @@ export function Sidebar() {
             <LogOut className="mr-2 h-4 w-4" /> Log Out
           </Button>
         </div>
-      </aside >
+      </aside>
     </>
   );
 }

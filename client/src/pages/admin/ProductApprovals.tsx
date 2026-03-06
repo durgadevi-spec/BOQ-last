@@ -11,15 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
-import { Loader2, CheckCircle2, XCircle, ChevronDown, ChevronUp, Edit, Save } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, ChevronDown, ChevronUp } from "lucide-react";
 import apiFetch from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { computeBoq } from "@/lib/boqCalc";
@@ -64,14 +56,6 @@ type ApprovalItem = {
   shop_name: string;
 };
 
-const UNIT_OPTIONS = [
-  "Sqft", "Sqmt", "Length", "LS", "RFT", "RMT", "pcs", "kg", "meter", "cum",
-  "litre", "set", "nos", "Bags", "Running feet", "Running meter", "BOX", "LTR",
-  "CQM", "cft", "ml", "DOZ", "PKT", "Man labour", "Points", "Roll", "Days",
-  "Inches", "Hours", "Percentage", "Panel", "Drum", "Ft", "1 Pkt", "Job", "Units"
-].sort();
-
-
 export default function ProductApprovals() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,12 +66,8 @@ export default function ProductApprovals() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const { toast } = useToast();
   const { user } = useData();
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<Partial<Approval>>({});
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const isViewOnly = user?.role === "product_manager";
-  const isAdmin = user?.role === "admin" || user?.role === "software_team";
 
   const fetchApprovals = async () => {
     try {
@@ -126,85 +106,6 @@ export default function ProductApprovals() {
       console.error("Failed to load items:", err);
     } finally {
       setLoadingItems(false);
-    }
-  };
-
-  const startEditing = (approval: Approval) => {
-    setEditingId(approval.id);
-    setEditForm({ ...approval });
-  };
-
-  const cancelEditing = () => {
-    setEditingId(null);
-    setEditForm({});
-    // Reload items to discard changes
-    if (expandedId) toggleExpand(expandedId);
-  };
-
-  const updateEditItem = (idx: number, field: keyof ApprovalItem, value: any) => {
-    setExpandedItems(prev => {
-      const next = [...prev];
-      next[idx] = { ...next[idx], [field]: value };
-      return next;
-    });
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editingId) return;
-    setIsSavingEdit(true);
-    try {
-      // Recalculate total cost based on edits
-      const basis = {
-        requiredUnitType: (editForm.required_unit_type as any) || "Sqft",
-        baseRequiredQty: Number(editForm.base_required_qty || 100),
-        wastagePctDefault: Number(editForm.wastage_pct_default || 0)
-      };
-
-      const materialLines = expandedItems.map((it: any) => ({
-        ...it,
-        id: it.id || it.material_id,
-        name: it.material_name || it.name,
-        baseQty: Number(it.base_qty ?? it.qty ?? 0),
-        wastagePct: it.wastage_pct !== undefined && it.wastage_pct !== null ? Number(it.wastage_pct) : undefined,
-        supplyRate: Number(it.supply_rate ?? it.rate ?? 0),
-        installRate: Number(it.install_rate ?? it.installRate ?? 0),
-        applyWastage: Boolean(it.apply_wastage)
-      }));
-
-      const boqRes = computeBoq(basis, materialLines, basis.baseRequiredQty);
-
-      const payload = {
-        ...editForm,
-        configName: editForm.config_name,
-        totalCost: boqRes.grandTotal,
-        items: expandedItems,
-        requiredUnitType: editForm.required_unit_type,
-        baseRequiredQty: editForm.base_required_qty,
-        wastagePctDefault: editForm.wastage_pct_default,
-        dimA: editForm.dim_a,
-        dimB: editForm.dim_b,
-        dimC: editForm.dim_c,
-        description: editForm.description
-      };
-
-      const res = await apiFetch(`/api/product-approvals/${editingId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        toast({ title: "Updated", description: "Approval request updated successfully." });
-        setEditingId(null);
-        fetchApprovals();
-      } else {
-        const data = await res.json();
-        toast({ title: "Error", description: data.message || "Failed to update", variant: "destructive" });
-      }
-    } catch (err) {
-      toast({ title: "Error", description: "Failed to save changes", variant: "destructive" });
-    } finally {
-      setIsSavingEdit(false);
     }
   };
 
@@ -298,8 +199,8 @@ export default function ProductApprovals() {
       setSelectedIds([]);
       return;
     }
-    // select all approval ids currently shown
-    const ids = approvals.map(a => a.id);
+    // select all pending approval ids currently shown
+    const ids = approvals.filter(a => a.status === 'pending').map(a => a.id);
     setSelectedIds(ids);
   };
 
@@ -360,7 +261,31 @@ export default function ProductApprovals() {
     }
   };
 
-  const pendingCount = approvals.filter(a => a.status === "pending").length;
+  const bulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Delete ${selectedIds.length} selected request(s)? This action cannot be undone.`)) return;
+    setActionLoading("bulk");
+    try {
+      for (const id of selectedIds) {
+        const res = await apiFetch(`/api/product-approvals/${id}`, { method: "DELETE" });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.message || `Failed to delete ${id}`);
+        }
+      }
+      toast({ title: "Deleted", description: `${selectedIds.length} request(s) deleted.` });
+      setSelectedIds([]);
+      fetchApprovals();
+      setExpandedId(null);
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Bulk delete failed", variant: "destructive" });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const pendingApprovals = approvals.filter(a => a.status === "pending");
+  const pendingCount = pendingApprovals.length;
 
   return (
     <Layout>
@@ -398,6 +323,7 @@ export default function ProductApprovals() {
                     <div className="text-sm font-bold">{selectedIds.length} selected</div>
                     <Button size="sm" onClick={bulkApprove} disabled={actionLoading != null} className="bg-green-600 hover:bg-green-700 text-white h-8 px-3">Approve Selected</Button>
                     <Button size="sm" variant="destructive" onClick={bulkReject} disabled={actionLoading != null} className="h-8 px-3">Reject Selected</Button>
+                    <Button size="sm" variant="outline" onClick={bulkDelete} disabled={actionLoading != null} className="h-8 px-3 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">Delete Selected</Button>
                     <Button size="sm" variant="ghost" onClick={() => setSelectedIds([])} disabled={actionLoading != null} className="h-8 px-3">Clear</Button>
                   </div>
                 )}
@@ -409,13 +335,7 @@ export default function ProductApprovals() {
                         <TableHead className="w-[40px]">
                           <div className="flex items-center justify-center">
                             <Checkbox
-                              checked={
-                                selectedIds.length > 0 && selectedIds.length === approvals.length
-                                  ? true
-                                  : selectedIds.length > 0
-                                    ? "indeterminate"
-                                    : false
-                              }
+                              checked={pendingCount > 0 && selectedIds.length === pendingCount}
                               onCheckedChange={(v) => toggleSelectAll(v as boolean)}
                               onClick={(e) => e.stopPropagation()}
                             />
@@ -446,11 +366,13 @@ export default function ProductApprovals() {
                               )}
                             </TableCell>
                             <TableCell onClick={(e) => e.stopPropagation()}>
-                              <Checkbox
-                                checked={selectedIds.includes(approval.id)}
-                                onCheckedChange={(v) => toggleSelect(approval.id, v as boolean)}
-                                onClick={(e) => e.stopPropagation()}
-                              />
+                              {approval.status === "pending" && (
+                                <Checkbox
+                                  checked={selectedIds.includes(approval.id)}
+                                  onCheckedChange={(v) => toggleSelect(approval.id, v as boolean)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              )}
                             </TableCell>
                             <TableCell className="font-bold">{approval.product_name}</TableCell>
                             <TableCell>{approval.config_name || "Default"}</TableCell>
@@ -489,36 +411,32 @@ export default function ProductApprovals() {
                               </div>
                             </TableCell>
                             <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                              {!isViewOnly && (
+                              {!isViewOnly && approval.status === "pending" && (
                                 <>
                                   <div className="flex items-center justify-center gap-2">
-                                    {approval.status === "pending" && (
-                                      <>
-                                        <Button
-                                          size="sm"
-                                          onClick={() => handleApprove(approval.id)}
-                                          disabled={actionLoading === approval.id}
-                                          className="bg-green-600 hover:bg-green-700 text-white h-8 px-3"
-                                        >
-                                          {actionLoading === approval.id ? (
-                                            <Loader2 className="h-3 w-3 animate-spin" />
-                                          ) : (
-                                            <><CheckCircle2 className="h-3 w-3 mr-1" /> Approve</>
-                                          )}
-                                        </Button>
-                                        <Button
-                                          size="sm"
-                                          variant="destructive"
-                                          onClick={() => handleReject(approval.id)}
-                                          disabled={actionLoading === approval.id}
-                                          className="h-8 px-3"
-                                        >
-                                          <XCircle className="h-3 w-3 mr-1" /> Reject
-                                        </Button>
-                                      </>
-                                    )}
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handleApprove(approval.id)}
+                                      disabled={actionLoading === approval.id}
+                                      className="bg-green-600 hover:bg-green-700 text-white h-8 px-3"
+                                    >
+                                      {actionLoading === approval.id ? (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      ) : (
+                                        <><CheckCircle2 className="h-3 w-3 mr-1" /> Approve</>
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() => handleReject(approval.id)}
+                                      disabled={actionLoading === approval.id}
+                                      className="h-8 px-3"
+                                    >
+                                      <XCircle className="h-3 w-3 mr-1" /> Reject
+                                    </Button>
                                   </div>
-                                  {/* Delete always available (admin) */}
+                                  {/* Delete only available for pending requests too */}
                                   <div className="mt-2">
                                     <Button
                                       size="sm"
@@ -540,73 +458,19 @@ export default function ProductApprovals() {
                             <TableRow key={`${approval.id}-details`}>
                               <TableCell colSpan={8} className="bg-slate-50 p-0">
                                 <div className="p-4 space-y-4">
-                                  <div className="flex items-center justify-between mb-4">
-                                    <div className="flex items-center gap-3">
-                                      <h3 className="font-bold text-slate-800 uppercase tracking-wider text-sm">Configuration Details</h3>
-                                      {isAdmin && !editingId && (
-                                        <Button size="sm" variant="outline" onClick={() => startEditing(approval)} className="h-7 text-[10px] font-bold gap-1.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50">
-                                          <Edit className="h-3 w-3" /> Edit Configuration
-                                        </Button>
-                                      )}
-                                    </div>
-                                    {editingId === approval.id && (
-                                      <div className="flex items-center gap-2">
-                                        <Button size="sm" variant="ghost" onClick={cancelEditing} disabled={isSavingEdit} className="h-8 text-[10px] font-bold">Cancel</Button>
-                                        <Button size="sm" onClick={handleSaveEdit} disabled={isSavingEdit} className="h-8 text-[10px] font-bold bg-indigo-600 hover:bg-indigo-700 text-white gap-1.5">
-                                          {isSavingEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                                          Save Changes
-                                        </Button>
-                                      </div>
-                                    )}
-                                  </div>
-
                                   {/* Config Summary Bar */}
                                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                                     <div className="bg-white rounded-lg border p-3">
                                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Unit Type</p>
-                                      {editingId === approval.id ? (
-                                        <Select
-                                          value={editForm.required_unit_type || "Sqft"}
-                                          onValueChange={(val) => setEditForm({ ...editForm, required_unit_type: val })}
-                                        >
-                                          <SelectTrigger className="w-full text-sm font-bold bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 h-8 mt-1">
-                                            <SelectValue placeholder="Select Unit" />
-                                          </SelectTrigger>
-                                          <SelectContent className="max-h-60 overflow-y-auto">
-                                            {UNIT_OPTIONS.map(u => (
-                                              <SelectItem key={u} value={u}>{u}</SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                      ) : (
-                                        <p className="font-bold text-sm">{approval.required_unit_type || "Sqft"}</p>
-                                      )}
+                                      <p className="font-bold text-sm">{approval.required_unit_type || "Sqft"}</p>
                                     </div>
                                     <div className="bg-white rounded-lg border p-3">
                                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Basis Qty</p>
-                                      {editingId === approval.id ? (
-                                        <input
-                                          type="number"
-                                          value={editForm.base_required_qty || ""}
-                                          onChange={e => setEditForm({ ...editForm, base_required_qty: e.target.value })}
-                                          className="w-full text-sm font-bold bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 h-6 mt-1"
-                                        />
-                                      ) : (
-                                        <p className="font-bold text-sm">{approval.base_required_qty || "100"}</p>
-                                      )}
+                                      <p className="font-bold text-sm">{approval.base_required_qty || "100"}</p>
                                     </div>
                                     <div className="bg-white rounded-lg border p-3">
                                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Wastage %</p>
-                                      {editingId === approval.id ? (
-                                        <input
-                                          type="number"
-                                          value={editForm.wastage_pct_default || ""}
-                                          onChange={e => setEditForm({ ...editForm, wastage_pct_default: e.target.value })}
-                                          className="w-full text-sm font-bold bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 h-6 mt-1"
-                                        />
-                                      ) : (
-                                        <p className="font-bold text-sm">{approval.wastage_pct_default || "0"}%</p>
-                                      )}
+                                      <p className="font-bold text-sm">{approval.wastage_pct_default || "0"}%</p>
                                     </div>
                                     <div className="bg-white rounded-lg border p-3">
                                       <p className="text-[10px] uppercase font-bold text-muted-foreground">Category</p>
@@ -618,34 +482,10 @@ export default function ProductApprovals() {
                                     </div>
                                   </div>
 
-                                  {editingId === approval.id && (
-                                    <div className="grid grid-cols-3 gap-3">
-                                      {[['Dim A', 'dim_a'], ['Dim B', 'dim_b'], ['Dim C', 'dim_c']].map(([label, key]) => (
-                                        <div key={key} className="bg-white rounded-lg border p-3">
-                                          <p className="text-[10px] uppercase font-bold text-muted-foreground">{label}</p>
-                                          <input
-                                            type="number"
-                                            value={(editForm as any)[key] || ""}
-                                            onChange={e => setEditForm({ ...editForm, [key]: e.target.value })}
-                                            className="w-full text-sm font-bold bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 h-6 mt-1"
-                                          />
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-
-                                  {(approval.description || editingId === approval.id) && (
+                                  {approval.description && (
                                     <div className="bg-white rounded-lg border p-3">
                                       <p className="text-[10px] uppercase font-bold text-muted-foreground mb-1">Description</p>
-                                      {editingId === approval.id ? (
-                                        <textarea
-                                          value={editForm.description || ""}
-                                          onChange={e => setEditForm({ ...editForm, description: e.target.value })}
-                                          className="w-full text-sm font-medium bg-muted/30 border-none rounded focus:ring-1 focus:ring-indigo-500 min-h-[60px] p-2"
-                                        />
-                                      ) : (
-                                        <p className="text-sm">{approval.description}</p>
-                                      )}
+                                      <p className="text-sm">{approval.description}</p>
                                     </div>
                                   )}
 
@@ -689,8 +529,8 @@ export default function ProductApprovals() {
                                                 <TableHead className="w-[100px] font-bold">Shop</TableHead>
                                                 <TableHead className="w-[120px] font-bold">Description</TableHead>
                                                 <TableHead className="w-[60px] font-bold">Unit</TableHead>
-                                                <TableHead className="w-[120px] font-bold text-center">Qty / {basis.baseRequiredQty} {basis.requiredUnitType}</TableHead>
-                                                <TableHead className="w-[120px] font-bold">Rate / Material Unit</TableHead>
+                                                <TableHead className="w-[100px] font-bold">Qty</TableHead>
+                                                <TableHead className="w-[100px] font-bold">Rate</TableHead>
                                                 <TableHead className="w-[110px] font-bold">Base Amount</TableHead>
                                                 <TableHead className="w-[70px] font-bold text-center">
                                                   <div className="flex flex-col items-center gap-1">
@@ -708,72 +548,25 @@ export default function ProductApprovals() {
                                             </TableHeader>
                                             <TableBody>
                                               {boqRes.computed.map((m, idx) => {
-                                                const baseAmt = (m.baseQty || 0) * (Number(m.supplyRate || 0) + Number(m.installRate || 0));
-                                                const isEd = editingId === approval.id;
+                                                const baseAmt = (m.baseQty || 0) * ((m.supplyRate || 0) + (m.installRate || 0));
                                                 return (
-                                                  <TableRow key={m.id} className={`hover:bg-muted/5 text-[11px] ${isEd ? 'bg-indigo-50/20' : ''}`}>
+                                                  <TableRow key={m.id} className="hover:bg-muted/5 text-[11px]">
                                                     <TableCell className="text-center font-medium">{idx + 1}</TableCell>
                                                     <TableCell className="font-semibold">{m.name}</TableCell>
                                                     <TableCell>{m.shop_name || "N/A"}</TableCell>
                                                     <TableCell>
-                                                      <Input
-                                                        value={m.location}
-                                                        disabled={!isEd}
-                                                        onChange={e => updateEditItem(idx, 'location', e.target.value)}
-                                                        className={`h-8 text-[10px] px-2 ${isEd ? 'bg-white border-indigo-200' : 'border-muted'}`}
-                                                      />
+                                                      <Input value={m.location} disabled className="h-8 border-muted text-[10px] px-2" />
                                                     </TableCell>
                                                     <TableCell className="text-[10px] font-medium">{m.unit}</TableCell>
                                                     <TableCell>
                                                       <div className="flex justify-center">
-                                                        <Input
-                                                          type="number"
-                                                          value={m.baseQty}
-                                                          disabled={!isEd}
-                                                          onChange={e => updateEditItem(idx, 'base_qty', e.target.value)}
-                                                          className={`h-8 text-[11px] px-2 font-bold w-20 text-center ${isEd ? 'bg-white border-indigo-200' : 'border-muted'}`}
-                                                        />
+                                                        <Input value={m.baseQty} disabled className="h-8 border-muted text-[11px] px-2 font-bold w-20 text-center" />
                                                       </div>
                                                     </TableCell>
-                                                    <TableCell className="text-[10px] font-bold">
-                                                      {isEd ? (
-                                                        <div className="flex flex-col gap-1">
-                                                          <Input
-                                                            type="number"
-                                                            value={m.supplyRate}
-                                                            onChange={e => updateEditItem(idx, 'supply_rate', e.target.value)}
-                                                            className="h-7 text-[9px] px-1 w-16 bg-white border-indigo-200"
-                                                            placeholder="Supply"
-                                                          />
-                                                          <Input
-                                                            type="number"
-                                                            value={m.installRate}
-                                                            onChange={e => updateEditItem(idx, 'install_rate', e.target.value)}
-                                                            className="h-7 text-[9px] px-1 w-16 bg-white border-indigo-200"
-                                                            placeholder="Install"
-                                                          />
-                                                        </div>
-                                                      ) : (
-                                                        `₹${(Number(m.supplyRate || 0) + Number(m.installRate || 0)).toLocaleString()}`
-                                                      )}
-                                                    </TableCell>
+                                                    <TableCell className="text-[10px] font-bold">₹{((m.supplyRate || 0) + (m.installRate || 0)).toLocaleString()}</TableCell>
                                                     <TableCell className="text-[10px] font-bold">₹{baseAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                    <TableCell className="text-center">
-                                                      <Checkbox
-                                                        disabled={!isEd}
-                                                        checked={!!m.applyWastage}
-                                                        onCheckedChange={v => updateEditItem(idx, 'apply_wastage', !!v)}
-                                                      />
-                                                    </TableCell>
-                                                    <TableCell>
-                                                      <Input
-                                                        type="number"
-                                                        value={m.wastagePct ?? ''}
-                                                        disabled={!isEd}
-                                                        onChange={e => updateEditItem(idx, 'wastage_pct', e.target.value)}
-                                                        className={`h-8 text-[10px] px-2 font-bold w-full ${isEd ? 'bg-white border-indigo-200' : 'border-orange-200'}`}
-                                                      />
-                                                    </TableCell>
+                                                    <TableCell className="text-center"><Checkbox disabled checked={!!m.applyWastage} /></TableCell>
+                                                    <TableCell><Input value={m.wastagePct ?? ''} disabled className="h-8 border-orange-200 text-[10px] px-2 font-bold w-full" /></TableCell>
                                                     <TableCell className="text-[10px] font-bold text-orange-600">{m.wastageQty.toFixed(2)}</TableCell>
                                                     <TableCell className="text-[10px] font-bold">{m.roundOffQty.toFixed(2)}</TableCell>
                                                     <TableCell className="text-[10px] font-bold text-blue-600">₹{m.lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
@@ -784,13 +577,6 @@ export default function ProductApprovals() {
                                               <TableRow className="bg-muted/20 font-black">
                                                 <TableCell colSpan={8} className="text-right py-3 pr-4">Total (Incl. Wastage)</TableCell>
                                                 <TableCell className="text-[11px] text-primary">₹{boqRes.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                <TableCell colSpan={5}></TableCell>
-                                              </TableRow>
-                                              <TableRow className="bg-primary/5 font-black border-t-2 border-primary/20">
-                                                <TableCell colSpan={8} className="text-right py-4 pr-4 text-primary uppercase tracking-widest text-xs">Rate per {basis.requiredUnitType}</TableCell>
-                                                <TableCell className="text-sm text-primary font-black underline decoration-primary decoration-2 underline-offset-8">
-                                                  ₹{(boqRes.grandTotal / (basis.baseRequiredQty || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                </TableCell>
                                                 <TableCell colSpan={5}></TableCell>
                                               </TableRow>
                                             </TableBody>
@@ -816,3 +602,4 @@ export default function ProductApprovals() {
     </Layout>
   );
 }
+

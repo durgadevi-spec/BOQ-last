@@ -104,6 +104,8 @@ export default function Step11Preview({
             install_rate: Number(item.install_rate || 0),
             config_id: firstConfig.product.id,
             material_id: item.material_id,
+            shop_id: item.shop_id || item.shopId,
+            shop_name: item.shop_name || item.shopName,
           }));
 
           setStep11Items(step11ItemsFromConfig);
@@ -143,6 +145,8 @@ export default function Step11Preview({
                 install_rate: Number(item.install_rate || 0),
                 config_id: config.id,
                 material_id: item.material_id,
+                shop_id: item.shop_id || item.shopId,
+                shop_name: item.shop_name || item.shopName,
               }));
 
               setStep11Items(step11ItemsFromStep3);
@@ -206,6 +210,8 @@ export default function Step11Preview({
                   install_rate: Number(item.install_rate || 0),
                   config_id: config.id,
                   material_id: item.material_id,
+                  shop_id: item.shop_id || item.shopId,
+                  shop_name: item.shop_name || item.shopName,
                 }));
 
                 setStep11Items(step11ItemsFromStep3);
@@ -263,6 +269,8 @@ export default function Step11Preview({
       install_rate: Number(item.install_rate || 0),
       config_id: config.product.id,
       material_id: item.material_id,
+      shop_id: item.shop_id || item.shopId,
+      shop_name: item.shop_name || item.shopName,
     }));
 
     setStep11Items(step11ItemsFromConfig);

@@ -683,12 +683,14 @@ export default function AdminDashboard() {
     vendorCategory: string;
     taxCodeType: 'hsn' | 'sac' | null;
     taxCodeValue: string;
+    technicalspecification: string;
   }>({
     name: "",
     code: "",
     vendorCategory: "",
     taxCodeType: null,
     taxCodeValue: "",
+    technicalspecification: "",
   });
 
   // Auto-generate code when admin enters material name
@@ -720,6 +722,7 @@ export default function AdminDashboard() {
         vendorCategory: newMasterMaterial.vendorCategory.trim(),
         taxCodeType: newMasterMaterial.taxCodeType,
         taxCodeValue: newMasterMaterial.taxCodeValue.trim(),
+        technicalspecification: newMasterMaterial.technicalspecification.trim(),
       };
 
       const res = await postJSON('/material-templates', payload);
@@ -737,7 +740,8 @@ export default function AdminDashboard() {
         code: "",
         vendorCategory: "",
         taxCodeType: null,
-        taxCodeValue: ""
+        taxCodeValue: "",
+        technicalspecification: ""
       });
     } catch (err: any) {
       console.error('create master material error', err);
@@ -756,6 +760,7 @@ export default function AdminDashboard() {
       vendorCategory: template.vendor_category || "",
       taxCodeType: template.tax_code_type || null,
       taxCodeValue: template.tax_code_value || "",
+      technicalspecification: template.technicalspecification || "",
     });
     // Scroll to the "Create Material" form at the top of the tab
     const element = document.getElementById("create-material-section");
@@ -2760,6 +2765,20 @@ export default function AdminDashboard() {
                         />
                       </div>
                     )}
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Description</Label>
+                      <Textarea
+                        value={newMasterMaterial.technicalspecification}
+                        onChange={(e) =>
+                          setNewMasterMaterial({
+                            ...newMasterMaterial,
+                            technicalspecification: e.target.value,
+                          })
+                        }
+                        placeholder="Enter item description..."
+                        className="min-h-[80px]"
+                      />
+                    </div>
                   </div>
                   <div className="flex gap-2">
                     <Button
@@ -2908,6 +2927,15 @@ export default function AdminDashboard() {
                                         />
                                       </div>
                                     )}
+                                    <div className="md:col-span-2">
+                                      <Label>Description</Label>
+                                      <Textarea
+                                        value={newMaterial.technicalspecification || newMaterial.technicalSpecification || ""}
+                                        onChange={(e) => setNewMaterial({ ...newMaterial, technicalspecification: e.target.value, technicalSpecification: e.target.value })}
+                                        placeholder="Enter item description..."
+                                        className="min-h-[80px]"
+                                      />
+                                    </div>
                                   </div>
                                   <div className="flex gap-2 justify-end pt-2">
                                     <Button size="sm" variant="ghost" onClick={() => setEditingMaterialId(null)}>Cancel</Button>
@@ -2926,7 +2954,8 @@ export default function AdminDashboard() {
                                           code: template.code,
                                           vendor_category: newMaterial.vendorCategory || null,
                                           tax_code_type: newMaterial.taxCodeType || null,
-                                          tax_code_value: newMaterial.taxCodeValue || null
+                                          tax_code_value: newMaterial.taxCodeValue || null,
+                                          technicalspecification: newMaterial.technicalspecification || newMaterial.technicalSpecification || null
                                         };
 
                                         const res = await apiFetch(`/material-templates/${template.id}`, {
@@ -2946,6 +2975,7 @@ export default function AdminDashboard() {
                                           vendor_category: newMaterial.vendorCategory,
                                           tax_code_type: newMaterial.taxCodeType,
                                           tax_code_value: newMaterial.taxCodeValue,
+                                          technicalspecification: newMaterial.technicalspecification || newMaterial.technicalSpecification,
                                           ...(data?.template || {})
                                         } : m));
                                         setEditingMaterialId(null);
@@ -2985,7 +3015,8 @@ export default function AdminDashboard() {
                                     name: template.name,
                                     vendorCategory: template.vendor_category || '',
                                     taxCodeType: template.tax_code_type,
-                                    taxCodeValue: template.tax_code_value || ''
+                                    taxCodeValue: template.tax_code_value || '',
+                                    technicalspecification: template.technicalspecification || ''
                                   });
                                 }}>Edit</Button>
                                 <Button size="sm" variant="destructive" onClick={async () => {

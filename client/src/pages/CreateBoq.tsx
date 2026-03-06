@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ChevronUp, ChevronDown, Loader2, CheckCircle2, XCircle, Lock, History, Clock, Briefcase, MapPin, IndianRupee } from "lucide-react";
+import { ChevronUp, ChevronDown, Loader2, CheckCircle2, XCircle, Lock, History, Clock, Briefcase, MapPin, IndianRupee, AlertCircle, FileText } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -61,13 +61,17 @@ function CodeBadge({ label, value }: { label: string; value: string }) {
 }
 
 function HsnSacBadges({ tableData }: { tableData: any }) {
-  const hasHsn = tableData.hsn_code || tableData.hsn_sac_type === "hsn";
-  const hasSac = tableData.sac_code || tableData.hsn_sac_type === "sac";
-  const hasNeither = !tableData.hsn_code && !tableData.sac_code && !tableData.hsn_sac_code;
+  const hsnSacType = tableData.hsn_sac_type || tableData.tax_code_type || "";
+  const hsnSacCode = tableData.hsn_sac_code || tableData.tax_code_value || "";
+
+  const hasHsn = tableData.hsn_code || hsnSacType === "hsn";
+  const hasSac = tableData.sac_code || hsnSacType === "sac";
+  const hasNeither = !tableData.hsn_code && !tableData.sac_code && !hsnSacCode && !tableData.hsn_sac_code;
+
   return (
     <div className="flex flex-wrap items-center gap-2 mt-1">
-      {hasHsn && <CodeBadge label="HSN" value={tableData.hsn_code || (tableData.hsn_sac_type === "hsn" ? tableData.hsn_sac_code : "") || "—"} />}
-      {hasSac && <CodeBadge label="SAC" value={tableData.sac_code || (tableData.hsn_sac_type === "sac" ? tableData.hsn_sac_code : "") || "—"} />}
+      {hasHsn && <CodeBadge label="HSN" value={tableData.hsn_code || (hsnSacType === "hsn" ? hsnSacCode : "") || "—"} />}
+      {hasSac && <CodeBadge label="SAC" value={tableData.sac_code || (hsnSacType === "sac" ? hsnSacCode : "") || "—"} />}
       {hasNeither && <CodeBadge label="HSN/SAC" value="—" />}
     </div>
   );
@@ -84,11 +88,16 @@ function VersionStatusBanner({ version }: { version: BOMVersion }) {
       <Loader2 className="h-4 w-4 animate-spin" /><div><strong>Pending Approval.</strong> This version is being reviewed by admin.</div>
     </div>
   );
-  if (version.status === "approved") return (
-    <div className="bg-green-50 border border-green-200 rounded p-4 text-sm text-green-800 flex items-center gap-2">
-      <CheckCircle2 className="h-4 w-4" /><div><strong>Approved!</strong> This version has been approved and moved to Finalize BOQ.</div>
-    </div>
-  );
+  if (version.status === "approved") {
+    return (
+      <div className="bg-green-50 border border-green-200 rounded p-4 text-sm text-green-800 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="h-4 w-4" />
+          <div><strong>Approved!</strong> This version has been approved. You can now generate Purchase Orders.</div>
+        </div>
+      </div>
+    );
+  }
   if (version.status === "rejected") return (
     <div className="bg-red-50 border border-red-200 rounded p-4 text-sm text-red-800 space-y-1">
       <div className="flex items-center gap-2"><XCircle className="h-4 w-4" /><strong>Rejected.</strong> This version was rejected.</div>
@@ -295,14 +304,14 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
                   <th className="border px-2 py-2 text-center font-semibold w-20">Qty/{tableData.configBasis?.requiredUnitType || "Sqf"}</th>
                   <th className="border px-2 py-2 text-center font-semibold w-24">Required Qty</th>
                   <th className="border px-2 py-2 text-center font-semibold w-24">Round off</th>
-                  {isEngineBased && <th className="border px-2 py-2 text-center font-semibold w-24">Rate/{tableData.configBasis?.requiredUnitType || "Sqft"}</th>}
+                  <th className="border px-2 py-2 text-center font-semibold w-24">Rate/{tableData.configBasis?.requiredUnitType || "Unit"}</th>
                   <th className="border px-2 py-2 text-center font-semibold w-28 text-green-700">Amount</th>
                   <th className="border px-2 py-2 text-center font-semibold w-16">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {displayLines.length === 0
-                  ? <tr><td colSpan={isEngineBased ? 11 : 10} className="text-center py-4 text-gray-500 italic">No items. Click "+ Add Item" to add one.</td></tr>
+                  ? <tr><td colSpan={11} className="text-center py-4 text-gray-500 italic">No items. Click "+ Add Item" to add one.</td></tr>
                   : displayLines.map((item: any, itemIdx: number) => (
                     <BoqItemRow key={item.itemKey || `${boqItem.id}-${itemIdx}`} item={item} itemIdx={itemIdx} boqItem={boqItem}
                       tableData={tableData} isEngineBased={isEngineBased} isVersionSubmitted={isVersionSubmitted}
@@ -312,7 +321,7 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
               </tbody>
               <tfoot className="bg-gray-50/50 font-bold border-t-2 border-gray-200">
                 <tr>
-                  <td colSpan={isEngineBased ? 9 : 8} className="border px-2 py-1.5 text-right uppercase tracking-wider text-[10px] text-gray-500">Total</td>
+                  <td colSpan={9} className="border px-2 py-1.5 text-right uppercase tracking-wider text-[10px] text-gray-500">Total</td>
                   <td className="border px-2 py-1.5 text-right text-green-700 bg-green-50/50">₹{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="border px-2 py-1.5"></td>
                 </tr>
@@ -398,10 +407,53 @@ export default function CreateBom() {
   const [targetBoqItemId, setTargetBoqItemId] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [editedFields, setEditedFields] = useState<Record<string, any>>({});
+  const [isGeneratingPO, setIsGeneratingPO] = useState(false);
+  const [isPOModalOpen, setIsPOModalOpen] = useState(false);
+  const [previewVendors, setPreviewVendors] = useState<any[]>([]);
+  const [isLoadingVendors, setIsLoadingVendors] = useState(false);
   const [loading, setLoading] = useState(true);
   const editedFieldsRef = useRef(editedFields);
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
+
+  const handleOpenPOModal = async () => {
+    if (!selectedVersionId) return;
+    setIsPOModalOpen(true);
+    setIsLoadingVendors(true);
+    try {
+      const res = await apiFetch(`/api/purchase-orders/preview-vendors?versionId=${selectedVersionId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPreviewVendors(data.vendors || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch preview vendors", err);
+    } finally {
+      setIsLoadingVendors(false);
+    }
+  };
+
+  const handleGeneratePO = async () => {
+    if (!selectedVersionId || isGeneratingPO) return;
+    setIsGeneratingPO(true);
+    try {
+      const res = await apiFetch("/api/purchase-orders/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: selectedProjectId, versionId: selectedVersionId }),
+      });
+      if (res.ok) {
+        toast({ title: "Success", description: "Purchase Orders generated successfully!" });
+      } else {
+        const err = await res.json();
+        toast({ title: "Error", description: err.message || "Failed to generate POs", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "Error", description: "Failed to generate POs", variant: "destructive" });
+    } finally {
+      setIsGeneratingPO(false);
+    }
+  };
 
   useEffect(() => { editedFieldsRef.current = editedFields; }, [editedFields]);
 
@@ -517,13 +569,24 @@ export default function CreateBom() {
     let unit = template.unit || template.uom || "pcs";
     let rate = Number(template.rate ?? template.supply_rate ?? template.default_rate ?? 0) || 0;
     let shopName = template.shop_name || template.shopName || "";
+    let hsnSacType = template.tax_code_type || template.taxCodeType || null;
+    let hsnSacCode = template.tax_code_value || template.taxCodeValue || "";
+
     if (template.id) {
       try {
         const r = await apiFetch(`/api/materials/${encodeURIComponent(template.id)}`);
-        if (r.ok) { const d = await r.json(); const m = d.material || d; unit = m.unit || unit; rate = Number(m.rate ?? m.supply_rate ?? rate) || rate; shopName = m.shop_name || m.shopName || shopName; }
+        if (r.ok) {
+          const d = await r.json();
+          const m = d.material || d;
+          unit = m.unit || unit;
+          rate = Number(m.rate ?? m.supply_rate ?? rate) || rate;
+          shopName = m.shop_name || m.shopName || shopName;
+          hsnSacType = m.tax_code_type || m.taxCodeType || hsnSacType;
+          hsnSacCode = m.tax_code_value || m.taxCodeValue || hsnSacCode;
+        }
       } catch { /* ignore */ }
     }
-    return { unit, rate, shopName };
+    return { unit, rate, shopName, hsnSacType, hsnSacCode };
   };
 
   // ── Handlers ───────────────────────────────────────────────────────────────
@@ -541,9 +604,34 @@ export default function CreateBom() {
   const handleAddMaterialToBoq = async (template: any) => {
     if (!selectedProjectId || !selectedVersionId) { toast({ title: "Error", description: "Select a project and version first", variant: "destructive" }); return; }
     try {
-      const { unit, rate, shopName } = await resolveMaterialFields(template);
-      const materialItem = { title: template.name, description: template.name, unit, qty: 1, supply_rate: rate, install_rate: 0, location: "Main Area", s_no: 1, shop_name: shopName };
-      const res = await apiFetch("/api/boq-items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ project_id: selectedProjectId, version_id: selectedVersionId, estimator: `material_${template.id}`, table_data: { product_name: template.name, step11_items: [materialItem] } }) });
+      const { unit, rate, shopName, hsnSacType, hsnSacCode } = await resolveMaterialFields(template);
+      const materialItem = {
+        title: template.name,
+        description: template.technicalspecification || template.technicalSpecification || template.name,
+        unit,
+        qty: 1,
+        supply_rate: rate,
+        install_rate: 0,
+        location: "Main Area",
+        s_no: 1,
+        shop_name: shopName
+      };
+      const res = await apiFetch("/api/boq-items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: selectedProjectId,
+          version_id: selectedVersionId,
+          estimator: `material_${template.id}`,
+          table_data: {
+            product_name: template.name,
+            step11_items: [materialItem],
+            hsn_sac_type: hsnSacType,
+            hsn_sac_code: hsnSacCode,
+            finalize_description: materialItem.description
+          }
+        })
+      });
       if (!res.ok) throw new Error(`${res.status}`);
       toast({ title: "Success", description: `Added ${template.name} to BOM` });
       loadBoqItemsAndEdits();
@@ -556,11 +644,28 @@ export default function CreateBom() {
       if (!existing) throw new Error("Product group not found");
       const tableData = parseTableData(existing.table_data);
       const currentStep11 = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
-      const { unit, rate, shopName } = await resolveMaterialFields(template);
-      const newItem: Step11Item = { title: template.name, description: template.name, unit, qty: 1, supply_rate: rate, install_rate: 0, location: template.location || "Main Area", s_no: currentStep11.length + 1, shop_name: shopName };
+      const { unit, rate, shopName, hsnSacType, hsnSacCode } = await resolveMaterialFields(template);
+      const newItem: Step11Item = {
+        title: template.name,
+        description: template.technicalspecification || template.technicalSpecification || template.name,
+        unit,
+        qty: 1,
+        supply_rate: rate,
+        install_rate: 0,
+        location: template.location || "Main Area",
+        s_no: currentStep11.length + 1,
+        shop_name: shopName
+      };
       const updatedTableData = tableData.materialLines && tableData.targetRequiredQty !== undefined
         ? { ...tableData, step11_items: [...currentStep11, { ...newItem, manual: true }] }
-        : { ...tableData, step11_items: [...currentStep11, newItem] };
+        : { ...tableData, step11_items: [...currentStep11, newItem], hsn_sac_type: hsnSacType, hsn_sac_code: hsnSacCode };
+      if (!tableData.hsn_sac_type && !tableData.hsn_sac_code && (hsnSacType || hsnSacCode)) {
+        updatedTableData.hsn_sac_type = hsnSacType;
+        updatedTableData.hsn_sac_code = hsnSacCode;
+      }
+      if (!tableData.finalize_description || tableData.finalize_description.trim() === "") {
+        updatedTableData.finalize_description = newItem.description;
+      }
       setBoqItems(prev => prev.map(i => i.id === boqItemId ? { ...i, table_data: updatedTableData } : i));
       const res = await updateBoqItem(boqItemId, updatedTableData);
       if (!res.ok) throw new Error("Failed to update");
@@ -986,10 +1091,18 @@ export default function CreateBom() {
             <Card>
               <CardContent className="space-y-3 pt-6">
                 {selectedVersion && <VersionStatusBanner version={selectedVersion} />}
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                   <Button onClick={handleSaveProject} variant="outline" disabled={isVersionSubmitted || Object.keys(editedFields).length === 0}>Save Draft</Button>
                   <Button onClick={() => handleSubmitVersion("submitted")} variant="outline" className="border-primary text-primary hover:bg-primary/5 font-bold" disabled={isVersionSubmitted || boqItems.length === 0}>Lock Version</Button>
                   <Button onClick={() => handleSubmitVersion("pending_approval")} variant="default" className="bg-primary hover:bg-primary/90 font-bold" disabled={isVersionSubmitted || boqItems.length === 0}>Submit for Approval</Button>
+                  <Button
+                    onClick={handleOpenPOModal}
+                    disabled={isGeneratingPO || boqItems.length === 0}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold"
+                  >
+                    {isGeneratingPO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <FileText className="h-4 w-4 mr-2" />}
+                    Generate PO
+                  </Button>
                   <Button onClick={handleDownloadExcel} variant="outline" disabled={boqItems.length === 0}>Download Excel</Button>
                   <Button onClick={handleDownloadPdf} variant="outline" disabled={boqItems.length === 0}>Download PDF</Button>
                 </div>
@@ -1017,6 +1130,63 @@ export default function CreateBom() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setTargetQtyModalOpen(false)}>Cancel</Button>
             <Button onClick={confirmAddToBom} className="bg-primary text-white font-bold">Add to BOM</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* PO Confirmation Modal */}
+      <Dialog open={isPOModalOpen} onOpenChange={setIsPOModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Generate Purchase Orders</DialogTitle>
+            <DialogDescription>
+              We found the following vendors for this BOM. Individual POs will be created for each vendor.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {isLoadingVendors ? (
+              <div className="flex justify-center py-6">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : previewVendors.length === 0 ? (
+              <div className="bg-amber-50 border border-amber-200 rounded p-4 text-sm text-amber-800 flex items-center gap-2">
+                <AlertCircle className="h-4 w-4" />
+                <div><strong>No Vendors Found.</strong> Please ensure you have selected vendors for your items before generating POs.</div>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                <p className="text-xs font-bold text-gray-500 uppercase">Found {previewVendors.length} Vendors:</p>
+                {previewVendors.map((vendor, idx) => (
+                  <div key={vendor.id} className="flex items-center gap-3 p-2 rounded border bg-gray-50">
+                    <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs">
+                      {idx + 1}
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-gray-800">{vendor.name}</div>
+                      <div className="text-[10px] text-gray-500">{vendor.location || "No location set"}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPOModalOpen(false)} disabled={isGeneratingPO}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-green-600 hover:bg-green-700 text-white"
+              onClick={() => {
+                setIsPOModalOpen(false);
+                handleGeneratePO();
+              }}
+              disabled={isGeneratingPO || previewVendors.length === 0}
+            >
+              {isGeneratingPO ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Confirm & Generate
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
