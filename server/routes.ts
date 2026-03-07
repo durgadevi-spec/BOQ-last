@@ -513,6 +513,50 @@ export async function registerRoutes(
     console.warn("[db] Could not create purchase_order_items table:", (err as any)?.message || err);
   }
 
+  // Ensure po_requests table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS po_requests (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id VARCHAR(100) NOT NULL,
+        project_name VARCHAR(255) NOT NULL,
+        requester_id VARCHAR(100) NOT NULL,
+        requester_name VARCHAR(255) NOT NULL,
+        employee_id VARCHAR(100),
+        department VARCHAR(100),
+        status VARCHAR(50) DEFAULT 'pending_approval',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_po_requests_requester ON po_requests(requester_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_po_requests_project ON po_requests(project_id)`);
+    console.log("[db] po_requests table verified/created");
+  } catch (err: unknown) {
+    console.warn("[db] Could not create po_requests table:", (err as any)?.message || err);
+  }
+
+  // Ensure po_request_items table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS po_request_items (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        po_request_id UUID NOT NULL REFERENCES po_requests(id) ON DELETE CASCADE,
+        item VARCHAR(255) NOT NULL,
+        category VARCHAR(100),
+        subcategory VARCHAR(100),
+        unit VARCHAR(50),
+        qty DECIMAL(10,2) NOT NULL,
+        remarks TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(`CREATE INDEX IF NOT EXISTS idx_po_request_items_req_id ON po_request_items(po_request_id)`);
+    console.log("[db] po_request_items table verified/created");
+  } catch (err: unknown) {
+    console.warn("[db] Could not create po_request_items table:", (err as any)?.message || err);
+  }
+
   // Ensure boq_history table exists
   try {
     await query(`
@@ -760,6 +804,70 @@ export async function registerRoutes(
       (err as any)?.message || err,
     );
   }
+
+  // Ensure budget_exceed_logs table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS budget_exceed_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id VARCHAR(100) NOT NULL REFERENCES boq_projects(id) ON DELETE CASCADE,
+        project_budget DECIMAL(15,2),
+        project_value_at_exceed DECIMAL(15,2),
+        exceeded_amount DECIMAL(15,2),
+        reason TEXT NOT NULL,
+        created_by VARCHAR(36),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await query(
+      `CREATE INDEX IF NOT EXISTS idx_budget_exceed_logs_project_id ON budget_exceed_logs(project_id)`,
+    );
+    console.log("[db] budget_exceed_logs table verified/created");
+  } catch (err: unknown) {
+    console.warn(
+      "[db] Could not create budget_exceed_logs table:",
+      (err as any)?.message || err,
+    );
+  }
+
+  // GET /api/budget-exceed-logs/:projectId
+  app.get("/api/budget-exceed-logs/:projectId", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { projectId } = req.params;
+      const result = await query(
+        `SELECT b.*, u.username as created_by_username 
+         FROM budget_exceed_logs b
+         LEFT JOIN users u ON b.created_by = u.id
+         WHERE project_id = $1 
+         ORDER BY created_at DESC`,
+        [projectId]
+      );
+      res.json({ logs: result.rows });
+    } catch (err) {
+      console.error("/api/budget-exceed-logs GET error", err);
+      res.status(500).json({ message: "failed to fetch budget exceed logs" });
+    }
+  });
+
+  // POST /api/budget-exceed-logs
+  app.post("/api/budget-exceed-logs", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { projectId, projectBudget, projectValueAtExceed, exceededAmount, reason } = req.body;
+      const userId = (req as any).user?.id || null;
+
+      const result = await query(
+        `INSERT INTO budget_exceed_logs 
+         (project_id, project_budget, project_value_at_exceed, exceeded_amount, reason, created_by) 
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *`,
+        [projectId, projectBudget, projectValueAtExceed, exceededAmount, reason, userId]
+      );
+      res.status(201).json({ log: result.rows[0] });
+    } catch (err) {
+      console.error("/api/budget-exceed-logs POST error", err);
+      res.status(500).json({ message: "failed to create budget exceed log" });
+    }
+  });
 
   // In-memory fallback storage for messages when DB is unreachable (development only)
   let inMemoryMessages: any[] = [];
@@ -3819,6 +3927,9 @@ export async function registerRoutes(
           }
         }
 
+        // Recalculate project value for the project (it now has a new latest version)
+        await recalculateProjectValue(project_id);
+
         res.json({
           id: versionId,
           project_id,
@@ -3954,6 +4065,12 @@ export async function registerRoutes(
 
         console.log(`Successfully finished saving edits. Total BOQ items updated: ${totalItemsUpdated}`);
 
+        // Recalculate project value for the version's project
+        const verRes = await query(`SELECT project_id FROM boq_versions WHERE id = $1`, [versionId]);
+        if (verRes.rows.length > 0) {
+          await recalculateProjectValue(verRes.rows[0].project_id);
+        }
+
         // Log edit in history
         if (totalItemsUpdated > 0) {
           try {
@@ -4006,7 +4123,7 @@ export async function registerRoutes(
 
 
 
-        if (status && !["draft", "submitted", "pending_approval", "approved", "rejected"].includes(status)) {
+        if (status && !["draft", "submitted", "pending_approval", "approved", "rejected", "edit_requested"].includes(status)) {
           res.status(400).json({ message: "Invalid status" });
           return;
         }
@@ -4063,7 +4180,7 @@ export async function registerRoutes(
         await query("ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS is_cleared BOOLEAN DEFAULT FALSE");
 
         const result = await query(
-          "SELECT * FROM boq_versions WHERE status != 'draft' AND (is_cleared IS FALSE OR is_cleared IS NULL) AND created_at >= '2026-03-02 00:00:00' ORDER BY created_at DESC"
+          "SELECT * FROM boq_versions WHERE status != 'draft' AND ((is_cleared IS FALSE OR is_cleared IS NULL) OR status = 'edit_requested') AND created_at >= '2026-03-02 00:00:00' ORDER BY created_at DESC"
         );
         res.json({ approvals: result.rows });
       } catch (err) {
@@ -4155,6 +4272,79 @@ export async function registerRoutes(
     }
   );
 
+  // POST /api/bom-approvals/:id/approve-edit - Approve an edit request (revert to draft)
+  app.post(
+    "/api/bom-approvals/:id/approve-edit",
+    authMiddleware,
+    requireRole("admin", "software_team"),
+    async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const result = await query(
+          "UPDATE boq_versions SET status = 'draft', updated_at = NOW() WHERE id = $1 AND status = 'edit_requested' RETURNING id",
+          [id]
+        );
+
+        if (result.rowCount === 0) {
+          return res.status(400).json({ message: "Invalid request or version status" });
+        }
+
+        // Log approval in history
+        try {
+          const user = (req as any).user;
+          await query(
+            `INSERT INTO boq_history (version_id, user_id, user_full_name, action, created_at)
+             VALUES ($1, $2, $3, 'edit_approved', NOW())`,
+            [id, user?.id, user?.fullName || user?.username]
+          );
+        } catch (hErr) {
+          console.warn("Failed to log approval history:", hErr);
+        }
+        res.json({ message: "Edit request approved successfully. Version is now draft." });
+      } catch (err) {
+        console.error("POST /api/bom-approvals/:id/approve-edit error:", err);
+        res.status(500).json({ message: "Failed to approve edit request" });
+      }
+    }
+  );
+
+  // POST /api/bom-approvals/:id/reject-edit - Reject an edit request (keep approved)
+  app.post(
+    "/api/bom-approvals/:id/reject-edit",
+    authMiddleware,
+    requireRole("admin", "software_team"),
+    async (req: Request, res: Response) => {
+      try {
+        const { id } = req.params;
+        const { reason } = req.body;
+        const result = await query(
+          "UPDATE boq_versions SET status = 'approved', rejection_reason = $1, updated_at = NOW() WHERE id = $2 AND status = 'edit_requested' RETURNING id",
+          [reason, id]
+        );
+
+        if (result.rowCount === 0) {
+          return res.status(400).json({ message: "Invalid request or version status" });
+        }
+
+        // Log rejection in history
+        try {
+          const user = (req as any).user;
+          await query(
+            `INSERT INTO boq_history (version_id, user_id, user_full_name, action, reason, created_at)
+             VALUES ($1, $2, $3, 'edit_rejected', $4, NOW())`,
+            [id, user?.id, user?.fullName || user?.username, reason]
+          );
+        } catch (hErr) {
+          console.warn("Failed to log rejection history:", hErr);
+        }
+        res.json({ message: "Edit request rejected successfully." });
+      } catch (err) {
+        console.error("POST /api/bom-approvals/:id/reject-edit error:", err);
+        res.status(500).json({ message: "Failed to reject edit request" });
+      }
+    }
+  );
+
   // POST /api/bom-approvals/bulk-clear - Mark multiple BOMs as cleared
   app.post(
     "/api/bom-approvals/bulk-clear",
@@ -4205,6 +4395,10 @@ export async function registerRoutes(
       const { versionId } = req.params;
 
       try {
+        // Get project_id before deleting
+        const verRes = await query(`SELECT project_id FROM boq_versions WHERE id = $1`, [versionId]);
+        const projectId = verRes.rows[0]?.project_id;
+
         // Use transaction to ensure both deletes succeed together
         await query("BEGIN");
 
@@ -4215,6 +4409,10 @@ export async function registerRoutes(
         await query(`DELETE FROM boq_versions WHERE id = $1`, [versionId]);
 
         await query("COMMIT");
+
+        if (projectId) {
+          await recalculateProjectValue(projectId);
+        }
 
         res.json({ message: "Version and its items deleted" });
       } catch (err) {
@@ -4230,6 +4428,56 @@ export async function registerRoutes(
       }
     },
   );
+
+  // Helper function to update project_value in boq_projects table
+  async function recalculateProjectValue(projectId: string) {
+    try {
+      // Find the latest version of the project
+      const versionResult = await query(
+        `SELECT id FROM boq_versions WHERE project_id = $1 ORDER BY version_number DESC LIMIT 1`,
+        [projectId],
+      );
+
+      if (versionResult.rows.length === 0) {
+        await query(`UPDATE boq_projects SET project_value = '0', updated_at = NOW() WHERE id = $1`, [projectId]);
+        return;
+      }
+
+      const latestVersionId = versionResult.rows[0].id;
+
+      // Fetch all items for this version
+      const itemsResult = await query(
+        `SELECT table_data FROM boq_items WHERE version_id = $1`,
+        [latestVersionId],
+      );
+
+      let totalValue = 0;
+      itemsResult.rows.forEach((row: any) => {
+        let tableData = row.table_data;
+        if (typeof tableData === "string") {
+          try { tableData = JSON.parse(tableData); } catch (e) { return; }
+        }
+
+        const items = tableData.step11_items || [];
+        if (Array.isArray(items)) {
+          items.forEach((item: any) => {
+            const qty = parseFloat(item.qty) || 0;
+            const supply = parseFloat(item.supply_rate) || 0;
+            const install = parseFloat(item.install_rate) || 0;
+            totalValue += qty * (supply + install);
+          });
+        }
+      });
+
+      await query(
+        `UPDATE boq_projects SET project_value = $1, updated_at = NOW() WHERE id = $2`,
+        [totalValue.toString(), projectId],
+      );
+      console.log(`[recalculateProjectValue] Updated project ${projectId} value to ${totalValue}`);
+    } catch (err) {
+      console.error(`[recalculateProjectValue] Error for project ${projectId}:`, err);
+    }
+  }
 
   // ====== BOQ ITEMS ROUTES ======
 
@@ -4281,6 +4529,9 @@ export async function registerRoutes(
             nextSortOrder,
           ],
         );
+
+        // Recalculate project value
+        await recalculateProjectValue(project_id);
 
         // Confirm row persisted by selecting it back
         try {
@@ -4502,7 +4753,13 @@ export async function registerRoutes(
           [JSON.stringify(table_data), itemId],
         );
 
-        res.json({ message: "BOQ item updated" });
+        // Recalculate project value
+        const itemRes = await query(`SELECT project_id FROM boq_items WHERE id = $1`, [itemId]);
+        if (itemRes.rows.length > 0) {
+          await recalculateProjectValue(itemRes.rows[0].project_id);
+        }
+
+        res.json({ message: "BOQ item updated successfully" });
       } catch (err) {
         console.error("PUT /api/boq-items/:itemId error", err);
         res.status(500).json({ message: "Failed to update BOQ item" });
@@ -4518,9 +4775,18 @@ export async function registerRoutes(
       try {
         const { itemId } = req.params;
 
+        // Get project_id before deleting the item
+        const itemRes = await query(`SELECT project_id FROM boq_items WHERE id = $1`, [itemId]);
+        const projectId = itemRes.rows.length > 0 ? itemRes.rows[0].project_id : null;
+
         await query(`DELETE FROM boq_items WHERE id = $1`, [itemId]);
 
-        res.json({ message: "BOQ item deleted" });
+        // Recalculate project value
+        if (projectId) {
+          await recalculateProjectValue(projectId);
+        }
+
+        res.json({ message: "BOQ item deleted successfully" });
       } catch (err) {
         console.error("DELETE /api/boq-items/:itemId error", err);
         res.status(500).json({ message: "Failed to delete BOQ item" });
@@ -5948,7 +6214,7 @@ export async function registerRoutes(
       const shopNames = new Set();
 
       // Helper: recursively extract shop_name from items and their nested step11_items
-      function extractShopNames(items) {
+      const extractShopNames = (items: any[]) => {
         for (const item of items) {
           const name = item.shop_name || item.shopName;
           if (name && typeof name === "string" && name.trim().length > 0) {
@@ -6024,7 +6290,7 @@ export async function registerRoutes(
         const vendorGroups: Record<string, any[]> = {};
 
         // Helper: flatten all material lines including those nested inside consolidated products
-        function flattenItems(items: any[]): any[] {
+        const flattenItems = (items: any[]): any[] => {
           const result: any[] = [];
           for (const item of items) {
             // If this item has nested step11_items (consolidated product), drill in
@@ -6150,17 +6416,222 @@ export async function registerRoutes(
     return raw || {};
   }
 
+  // ====== PO REQUEST ROUTES ======
+
+  // POST /api/po-requests - Raise a new PO Request
+  app.post("/api/po-requests", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { projectId, projectName, employeeId, department, items } = req.body;
+      const user = (req as any).user;
+
+      if (!user) {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      if (!projectId || !projectName || !items || !items.length) {
+        return res.status(400).json({ message: "Missing required fields or items" });
+      }
+
+      // Insert PO Request
+      const poReqResult = await query(
+        `INSERT INTO po_requests 
+         (project_id, project_name, requester_id, requester_name, employee_id, department, status) 
+         VALUES ($1, $2, $3, $4, $5, $6, 'pending_approval') RETURNING *`,
+        [projectId, projectName, user.id, user.fullName || user.username, employeeId || user.employeeCode, department || user.department]
+      );
+
+      const poRequest = poReqResult.rows[0];
+
+      // Insert Items
+      for (const item of items) {
+        await query(
+          `INSERT INTO po_request_items 
+           (po_request_id, item, category, subcategory, unit, qty, remarks) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [poRequest.id, item.item, item.category, item.subcategory, item.unit, item.qty, item.remarks]
+        );
+      }
+
+      res.status(201).json({ message: "PO Request raised successfully", poRequest });
+    } catch (err) {
+      console.error("POST /api/po-requests error", err);
+      res.status(500).json({ message: "Failed to raise PO Request" });
+    }
+  });
+
+  // GET /api/po-requests - List PO Requests (with optional filters)
+  app.get("/api/po-requests", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { status, view } = req.query;
+      const user = (req as any).user;
+
+      let queryStr = `SELECT * FROM po_requests WHERE 1=1`;
+      const params: any[] = [];
+
+      if (view === 'my') {
+        params.push(user.id);
+        queryStr += ` AND requester_id = $${params.length}`;
+      }
+
+      if (status) {
+        params.push(status);
+        queryStr += ` AND status = $${params.length}`;
+      }
+
+      queryStr += ` ORDER BY created_at DESC`;
+
+      const result = await query(queryStr, params);
+
+      // For each request, optionally fetch item count
+      const requests = result.rows;
+
+      res.json({ poRequests: requests });
+    } catch (err) {
+      console.error("GET /api/po-requests error:", err);
+      res.status(500).json({ message: "Failed to load PO Requests" });
+    }
+  });
+
+  // GET /api/po-requests/:id - Get a single PO Request and its items
+  app.get("/api/po-requests/:id", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const reqResult = await query(`SELECT * FROM po_requests WHERE id = $1`, [id]);
+      if (reqResult.rows.length === 0) {
+        return res.status(404).json({ message: "PO Request not found" });
+      }
+
+      const itemsResult = await query(`SELECT * FROM po_request_items WHERE po_request_id = $1 ORDER BY created_at ASC`, [id]);
+
+      res.json({
+        poRequest: reqResult.rows[0],
+        items: itemsResult.rows
+      });
+    } catch (err) {
+      console.error("GET /api/po-requests/:id error:", err);
+      res.status(500).json({ message: "Failed to load PO Request details" });
+    }
+  });
+
+  // PATCH /api/po-requests/:id/status - Update PO Request status
+  app.patch("/api/po-requests/:id/status", authMiddleware, requireRole('admin', 'software_team', 'purchase_team'), async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { status } = req.body; // 'approved' or 'rejected'
+
+      if (!status) {
+        return res.status(400).json({ message: "Status is required" });
+      }
+
+      const result = await query(
+        `UPDATE po_requests SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        [status, id]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ message: "PO Request not found" });
+      }
+
+      res.json({ message: `PO Request ${status}`, poRequest: result.rows[0] });
+    } catch (err) {
+      console.error("PATCH /api/po-requests/:id/status error:", err);
+      res.status(500).json({ message: "Failed to update PO Request status" });
+    }
+  });
+
+  // POST /api/po-requests/:id/generate-po - Generate PO from Approved Request
+  app.post("/api/po-requests/:id/generate-po", authMiddleware, requireRole('admin', 'purchase_team'), async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { vendorId, vendorName, itemsWithRates } = req.body;
+      const user = (req as any).user;
+
+      // 1. Validate PO Request
+      const reqResult = await query(`SELECT * FROM po_requests WHERE id = $1`, [id]);
+      if (reqResult.rows.length === 0) {
+        return res.status(404).json({ message: "PO Request not found" });
+      }
+      const poReq = reqResult.rows[0];
+
+      if (poReq.status !== 'approved') {
+        return res.status(400).json({ message: "Only approved PO requests can generate POs" });
+      }
+
+      if (!vendorId) {
+        return res.status(400).json({ message: "Vendor ID is required" });
+      }
+
+      // 2. Generate PO Number
+      const poCountRes = await query(`SELECT COUNT(*) FROM purchase_orders`);
+      const poNumStr = String(parseInt(poCountRes.rows[0].count) + 1).padStart(3, "0");
+      const generatedPoNumber = `PO-${new Date().getFullYear()}-${poNumStr}`;
+
+      // 3. Calculate Totals based on matching selected rates
+      let subtotal = 0;
+      const finalItems = [];
+
+      for (const item of itemsWithRates) { // Expecting { poRequestItemId, rate, qty }
+        const itemRes = await query(`SELECT * FROM po_request_items WHERE id = $1 AND po_request_id = $2`, [item.poRequestItemId, id]);
+        if (itemRes.rows.length > 0) {
+          const dbItem = itemRes.rows[0];
+          const qty = item.qty || dbItem.qty;
+          const rate = item.rate || 0;
+          const amount = qty * rate;
+          subtotal += amount;
+
+          finalItems.push({
+            item: dbItem.item,
+            description: dbItem.remarks || '',
+            unit: dbItem.unit,
+            qty: qty,
+            rate: rate,
+            amount: amount
+          });
+        }
+      }
+
+      // 4. Create PO (Draft initially or Generated directly?)
+      const poCreateRes = await query(
+        `INSERT INTO purchase_orders 
+         (po_number, project_id, project_name, vendor_id, vendor_name, subtotal, tax, total, status, requested_by) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+        [generatedPoNumber, poReq.project_id, poReq.project_name, vendorId, vendorName || vendorId, subtotal, 0, subtotal, 'draft', poReq.requester_name]
+      );
+      const newPo = poCreateRes.rows[0];
+
+      // 5. Create PO Items
+      for (const fItem of finalItems) {
+        await query(
+          `INSERT INTO purchase_order_items 
+           (po_id, item, description, unit, qty, rate, amount) 
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [newPo.id, fItem.item, fItem.description, fItem.unit, fItem.qty, fItem.rate, fItem.amount]
+        );
+      }
+
+      // 6. Update PO Request Status
+      await query(`UPDATE po_requests SET status = 'po_generated', updated_at = NOW() WHERE id = $1`, [id]);
+
+      res.status(201).json({ message: "Purchase Order generated successfully", po: newPo });
+    } catch (err) {
+      console.error("POST /api/po-requests/:id/generate-po error:", err);
+      res.status(500).json({ message: "Failed to generate PO from request" });
+    }
+  });
+
+
   // GET /api/purchase-orders - List all purchase orders (with optional status filter)
   app.get("/api/purchase-orders", authMiddleware, async (req: Request, res: Response) => {
     try {
       const { status } = req.query;
       let queryStr = `
-        SELECT po.*, po.total as total_amount, p.name as project_name, 
-               COALESCE(po.vendor_name, s.name, po.vendor_id) as vendor_name
+        SELECT po.*, po.total as total_amount, p.name as project_name,
+        COALESCE(po.vendor_name, s.name, po.vendor_id) as vendor_name
         FROM purchase_orders po
         LEFT JOIN boq_projects p ON po.project_id = p.id
-        LEFT JOIN shops s ON (po.vendor_id::text = s.id::text OR TRIM(s.name) = TRIM(po.vendor_name))
-      `;
+        LEFT JOIN shops s ON(po.vendor_id:: text = s.id:: text OR TRIM(s.name) = TRIM(po.vendor_name))
+        `;
       const params: any[] = [];
 
       if (status) {
@@ -6185,15 +6656,15 @@ export async function registerRoutes(
 
       // Fetch the PO header with detailed shop information
       const poResult = await query(
-        `SELECT po.*, po.total as total_amount, 
-                p.name as project_name, p.client as project_client, p.location as project_location, 
-                COALESCE(po.vendor_name, s.name, po.vendor_id) as vendor_name, 
-                s.location as vendor_location, s.city as vendor_city, 
-                s.state as vendor_state, s.pincode as vendor_pincode, s.gstno as vendor_gstin,
-                s.contactnumber as vendor_phone, s.phonecountrycode as vendor_phone_code
+        `SELECT po.*, po.total as total_amount,
+        p.name as project_name, p.client as project_client, p.location as project_location,
+        COALESCE(po.vendor_name, s.name, po.vendor_id) as vendor_name,
+        s.location as vendor_location, s.city as vendor_city,
+        s.state as vendor_state, s.pincode as vendor_pincode, s.gstno as vendor_gstin,
+        s.contactnumber as vendor_phone, s.phonecountrycode as vendor_phone_code
          FROM purchase_orders po
          LEFT JOIN boq_projects p ON po.project_id = p.id
-         LEFT JOIN shops s ON (po.vendor_id::text = s.id::text OR TRIM(s.name) = TRIM(po.vendor_name))
+         LEFT JOIN shops s ON(po.vendor_id:: text = s.id:: text OR TRIM(s.name) = TRIM(po.vendor_name))
          WHERE po.id = $1`,
         [id]
       );
@@ -6231,7 +6702,7 @@ export async function registerRoutes(
       }
 
       const result = await query(
-        `UPDATE purchase_orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+        `UPDATE purchase_orders SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING * `,
         [status, id]
       );
 
@@ -6258,7 +6729,7 @@ export async function registerRoutes(
       const result = await query(
         `UPDATE purchase_orders 
          SET status = $1, approval_comments = $2, updated_at = NOW() 
-         WHERE id = $3 RETURNING *`,
+         WHERE id = $3 RETURNING * `,
         [status, comment || null, id]
       );
 

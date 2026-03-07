@@ -48,6 +48,11 @@ import PurchaseOrderDetail from "@/pages/PurchaseOrderDetail";
 import POApprovals from "@/pages/POApprovals";
 import DeliveryTracker from "@/pages/DeliveryTracker";
 
+import RaisePORequest from "@/pages/RaisePORequest";
+import MyPORequests from "@/pages/MyPORequests";
+import PORequestApprovals from "@/pages/admin/PORequestApprovals";
+import ApprovedPORequests from "@/pages/admin/ApprovedPORequests";
+
 function Router() {
   return (
     <Switch>
@@ -82,6 +87,12 @@ function Router() {
       <Route path="/purchase-orders/:id" component={PurchaseOrderDetail} />
       <Route path="/po-approvals" component={POApprovals} />
       <Route path="/delivery-tracker" component={DeliveryTracker} />
+
+      {/* ================= PO REQUESTS ================= */}
+      <Route path="/raise-po-request" component={RaisePORequest} />
+      <Route path="/my-po-requests" component={MyPORequests} />
+      <Route path="/admin/po-request-approvals" component={PORequestApprovals} />
+      <Route path="/admin/approved-po-requests" component={ApprovedPORequests} />
 
 
       <Route path="/admin/dashboard" component={AdminDashboard} />

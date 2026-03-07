@@ -55,11 +55,22 @@ interface Version {
   updated_at: string;
 }
 
+interface BudgetExceedLog {
+  id: number;
+  project_id: string;
+  project_budget: string;
+  project_value_at_exceed: string;
+  exceeded_amount: string;
+  reason: string;
+  created_at: string;
+}
+
 export default function ProjectDashboard() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectVersions, setProjectVersions] = useState<Record<string, Version[]>>({});
+  const [projectLogs, setProjectLogs] = useState<Record<string, BudgetExceedLog[]>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -86,6 +97,17 @@ export default function ProjectDashboard() {
         });
 
         setProjectVersions(versionsMap);
+
+        // Fetch logs for all projects
+        const logPromises = projectList.map((p: Project) =>
+          apiFetch(`/api/budget-exceed-logs/${p.id}`).then((res) => res.json())
+        );
+        const logsResults = await Promise.all(logPromises);
+        const logsMap: Record<string, BudgetExceedLog[]> = {};
+        projectList.forEach((p: Project, idx: number) => {
+          logsMap[p.id] = logsResults[idx].logs || [];
+        });
+        setProjectLogs(logsMap);
       }
     } catch (error) {
       toast({
@@ -220,25 +242,44 @@ export default function ProjectDashboard() {
                           <MapPin size={14} /> {project.location || "N/A"}
                         </span>
 
-                        {(project.project_value || project.budget) && (
-                          <span className="flex items-center gap-1 font-medium">
-                            <IndianRupee size={14} />
-                            {project.project_value || project.budget}
+                        <div className="flex flex-wrap gap-4 pt-1">
+                          <span className="flex items-center gap-1 text-gray-700">
+                            <span className="text-gray-400 font-bold uppercase text-[10px]">Budget:</span>
+                            <span className="font-semibold text-emerald-600">₹{parseFloat(project.budget || "0").toLocaleString()}</span>
                           </span>
-                        )}
+                          <span className="flex items-center gap-1 text-gray-700">
+                            <span className="text-gray-400 font-bold uppercase text-[10px]">Current Value:</span>
+                            <span className="font-semibold">₹{parseFloat(project.project_value || "0").toLocaleString()}</span>
+                          </span>
+                          {parseFloat(project.budget || "0") > 0 && (
+                            <span className="flex items-center gap-1 text-gray-700">
+                              <span className="text-gray-400 font-bold uppercase text-[10px]">Revenue:</span>
+                              <span className={`font-semibold ${(parseFloat(project.budget || "0") - parseFloat(project.project_value || "0")) < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                ₹{(parseFloat(project.budget || "0") - parseFloat(project.project_value || "0")).toLocaleString()}
+                              </span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
 
-                    <Button
-                      size="sm"
-                      className="bg-gray-900 hover:bg-gray-800 text-white rounded-xl"
-                      onClick={() =>
-                        setLocation(`/finalize-bom?projectId=${project.id}`)
-                      }
-                    >
-                      View BOQ
-                      <ExternalLink size={14} className="ml-2" />
-                    </Button>
+                    <div className="flex flex-col items-end gap-2">
+                      {parseFloat(project.budget || "0") > 0 && parseFloat(project.project_value || "0") > parseFloat(project.budget || "0") && (
+                        <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-[10px] font-bold px-2 py-0.5">
+                          BUDGET EXCEEDED
+                        </Badge>
+                      )}
+                      <Button
+                        size="sm"
+                        className="bg-gray-900 hover:bg-gray-800 text-white rounded-xl"
+                        onClick={() =>
+                          setLocation(`/finalize-bom?project=${project.id}`)
+                        }
+                      >
+                        View BOQ
+                        <ExternalLink size={14} className="ml-2" />
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
 
@@ -296,7 +337,7 @@ export default function ProjectDashboard() {
                                   className="rounded-full h-8 w-8 p-0 hover:bg-gray-100"
                                   onClick={() =>
                                     setLocation(
-                                      `/finalize-bom?projectId=${project.id}&versionId=${version.id}`
+                                      `/finalize-bom?project=${project.id}&versionId=${version.id}`
                                     )
                                   }
                                 >
@@ -309,6 +350,29 @@ export default function ProjectDashboard() {
                       </TableBody>
                     </Table>
                   </div>
+
+                  {projectLogs[project.id] && projectLogs[project.id].length > 0 && (
+                    <div className="mt-6 space-y-3">
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-gray-500 flex items-center gap-2">
+                        <Clock size={14} /> Budget Exceed History
+                      </h3>
+                      <div className="grid grid-cols-1 gap-3">
+                        {projectLogs[project.id].map(log => (
+                          <div key={log.id} className="p-3 bg-red-50/50 border border-red-100 rounded-lg text-sm">
+                            <div className="flex justify-between items-start mb-1">
+                              <span className="font-semibold text-red-700">Exceeded by ₹{parseFloat(log.exceeded_amount).toLocaleString()}</span>
+                              <span className="text-[11px] text-gray-500">{formatDate(log.created_at)}</span>
+                            </div>
+                            <p className="text-gray-700 italic">" {log.reason} "</p>
+                            <div className="mt-2 text-[11px] text-gray-400 flex gap-3">
+                              <span>Budget: ₹{parseFloat(log.project_budget).toLocaleString()}</span>
+                              <span>Prev Value: ₹{parseFloat(log.project_value_at_exceed).toLocaleString()}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

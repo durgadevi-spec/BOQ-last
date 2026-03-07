@@ -182,7 +182,7 @@ export default function POApprovals() {
                                             </TableCell>
                                             <TableCell className="text-right">
                                                 <div className="flex justify-end gap-2">
-                                                    <Button variant="outline" size="sm" onClick={() => setLocation(`/purchase-orders/${po.id}`)}>
+                                                    <Button variant="outline" size="sm" onClick={() => setLocation(`/purchase-orders/${po.id}?mode=approval`)}>
                                                         <Eye className="h-4 w-4 mr-1" /> View
                                                     </Button>
                                                     <Button variant="outline" size="sm" className="border-red-600 text-red-600 hover:bg-red-50" onClick={() => { setSelectedPO(po); setApprovalAction("reject"); setShowApprovalDialog(true); }}>

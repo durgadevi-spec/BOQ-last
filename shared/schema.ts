@@ -214,10 +214,38 @@ export const purchaseOrderItems = pgTable("purchase_order_items", {
   createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`),
 });
 
+export const poRequests = pgTable("po_requests", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: text("project_id").notNull(),
+  projectName: text("project_name").notNull(),
+  requesterId: text("requester_id").notNull(),
+  requesterName: text("requester_name").notNull(),
+  employeeId: text("employee_id"),
+  department: text("department"),
+  // pending_approval, approved, rejected, po_generated
+  status: text("status").notNull().default("pending_approval"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).default(sql`now()`),
+});
+
+export const poRequestItems = pgTable("po_request_items", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  poRequestId: uuid("po_request_id").notNull().references(() => poRequests.id, { onDelete: 'cascade' }),
+  item: text("item").notNull(),
+  category: text("category"),
+  subcategory: text("subcategory"),
+  unit: text("unit"),
+  qty: decimal("qty", { precision: 10, scale: 2 }).notNull(),
+  remarks: text("remarks"),
+  createdAt: timestamp("created_at", { withTimezone: true }).default(sql`now()`),
+});
+
 export const insertStep11ProductSchema = createInsertSchema(step11Products);
 export const insertStep11ProductItemSchema = createInsertSchema(step11ProductItems);
 export const insertPurchaseOrderSchema = createInsertSchema(purchaseOrders);
 export const insertPurchaseOrderItemSchema = createInsertSchema(purchaseOrderItems);
+export const insertPoRequestSchema = createInsertSchema(poRequests);
+export const insertPoRequestItemSchema = createInsertSchema(poRequestItems);
 
 export type Step11Product = typeof step11Products.$inferSelect;
 export type InsertStep11Product = z.infer<typeof insertStep11ProductSchema>;
@@ -227,3 +255,7 @@ export type PurchaseOrder = typeof purchaseOrders.$inferSelect;
 export type InsertPurchaseOrder = z.infer<typeof insertPurchaseOrderSchema>;
 export type PurchaseOrderItem = typeof purchaseOrderItems.$inferSelect;
 export type InsertPurchaseOrderItem = z.infer<typeof insertPurchaseOrderItemSchema>;
+export type PoRequest = typeof poRequests.$inferSelect;
+export type InsertPoRequest = z.infer<typeof insertPoRequestSchema>;
+export type PoRequestItem = typeof poRequestItems.$inferSelect;
+export type InsertPoRequestItem = z.infer<typeof insertPoRequestItemSchema>;

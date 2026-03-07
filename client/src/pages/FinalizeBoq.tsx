@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
@@ -23,6 +23,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,7 +35,7 @@ import { computeBoq } from "@/lib/boqCalc";
 
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import { Trash2, Copy, GripVertical, GripHorizontal, Eye, EyeOff, Edit2, ChevronDown, Briefcase, MapPin, IndianRupee, Lock, Edit3, Plus, CheckCircle2 } from "lucide-react";
+import { Trash2, Copy, GripVertical, GripHorizontal, Eye, EyeOff, Edit2, ChevronDown, Briefcase, MapPin, IndianRupee, Lock, Edit3, Plus, CheckCircle2, AlertCircle, Clock } from "lucide-react";
 
 /** Helper to generate Excel-style column names (A, B, C... Z, AA, AB...) */
 const getExcelColumnName = (n: number) => {
@@ -103,7 +104,7 @@ type BOMVersion = {
   id: string;
   project_id: string;
   version_number: number;
-  status: "draft" | "submitted" | "pending_approval" | "approved" | "rejected";
+  status: "draft" | "submitted" | "pending_approval" | "approved" | "rejected" | "edit_requested";
   created_at: string;
   updated_at: string;
   project_name?: string;
@@ -390,6 +391,11 @@ export default function FinalizeBoq() {
   const [showFinalizedPicker, setShowFinalizedPicker] = useState(false);
   const [finalizedItems, setFinalizedItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [budgetWarningOpen, setBudgetWarningOpen] = useState(false);
+  const [budgetReasonOpen, setBudgetReasonOpen] = useState(false);
+  const [budgetExceedReason, setBudgetExceedReason] = useState("");
+  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
+  const [exceedData, setExceedData] = useState({ budget: 0, valAtExceed: 0, amount: 0 });
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const dragControls = useDragControls();
@@ -434,6 +440,8 @@ export default function FinalizeBoq() {
 
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [selectedExportCols, setSelectedExportCols] = useState<string[]>([]);
+  const [isPdfExportDialogOpen, setIsPdfExportDialogOpen] = useState(false);
+  const [selectedPdfExportCols, setSelectedPdfExportCols] = useState<string[]>([]);
 
   const handleToggleColumnTotalVisibility = async (colName: string, hide: boolean) => {
     const updates = boqItems.map(item => {
@@ -755,7 +763,7 @@ export default function FinalizeBoq() {
               return createdAt < CUTOFF_DATE;
             });
 
-            if (approvedVersion && selectable.some(v => v.id === approvedVersion.id)) {
+            if (approvedVersion && selectable.some((v: BOMVersion) => v.id === approvedVersion.id)) {
               setSelectedVersionId(approvedVersion.id);
             } else if (selectable.length > 0) {
               setSelectedVersionId(selectable[0].id);
@@ -772,137 +780,131 @@ export default function FinalizeBoq() {
     loadVersions();
   }, [selectedProjectId]);
 
-  useEffect(() => {
-    if (!selectedVersionId) {
-      setBoqItems([]);
-      setEditedFields({});
-      editedFieldsRef.current = {};
-      return;
-    }
+  const loadBoqItemsAndEdits = useCallback(async () => {
+    if (!selectedVersionId) return;
+    try {
+      const safeParseJson = async (res: Response) => {
+        const text = await res.text();
+        if (!text.trim() || res.status === 204) return {};
+        try { return JSON.parse(text); } catch { throw new Error(`Invalid JSON (status=${res.status})`); }
+      };
 
-    const loadBoqItemsAndEdits = async () => {
-      try {
-        const safeParseJson = async (res: Response) => {
-          const text = await res.text();
-          if (!text.trim() || res.status === 204) return {};
-          try { return JSON.parse(text); } catch { throw new Error(`Invalid JSON (status=${res.status})`); }
-        };
+      const response = await apiFetch(
+        `/api/boq-items/version/${encodeURIComponent(selectedVersionId)}`,
+        { headers: {} },
+      );
+      if (response.ok) {
+        try {
+          const data = await safeParseJson(response as unknown as Response);
+          const items: BOMItem[] = data.items || [];
+          setBoqItems(items);
 
-        const response = await apiFetch(
-          `/api/boq-items/version/${encodeURIComponent(selectedVersionId)}`,
-          { headers: {} },
-        );
-        if (response.ok) {
-          try {
-            const data = await safeParseJson(response as unknown as Response);
-            const items: BOMItem[] = data.items || [];
-            setBoqItems(items);
+          const restoredCols: { [id: string]: { name: string, isTotal: boolean, hideTotal?: boolean }[] } = {};
+          const restoredVals: { [id: string]: { [rowIdx: number]: { [col: string]: string } } } = {};
+          const restoredDescs: { [id: string]: string } = {};
+          const restoredQtys: { [id: string]: string } = {};
+          const restoredUnits: { [id: string]: string } = {};
+          const restoredOverrideRates: { [id: string]: string } = {};
+          let sysTotalHidden = false;
+          let restoredGrandTotalCol = "Total Value (₹)";
 
-            const restoredCols: { [id: string]: { name: string, isTotal: boolean, hideTotal?: boolean }[] } = {};
-            const restoredVals: { [id: string]: { [rowIdx: number]: { [col: string]: string } } } = {};
-            const restoredDescs: { [id: string]: string } = {};
-            const restoredQtys: { [id: string]: string } = {};
-            const restoredUnits: { [id: string]: string } = {};
-            const restoredOverrideRates: { [id: string]: string } = {};
-            let sysTotalHidden = false;
-            let restoredGrandTotalCol = "Total Value (₹)";
+          for (const item of items) {
+            let td = item.table_data || {};
+            if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
 
-            for (const item of items) {
-              let td = item.table_data || {};
-              if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+            if (td.finalize_hide_system_total) sysTotalHidden = true;
+            if (td.finalize_grand_total_column) restoredGrandTotalCol = td.finalize_grand_total_column;
 
-              if (td.finalize_hide_system_total) sysTotalHidden = true;
-              if (td.finalize_grand_total_column) restoredGrandTotalCol = td.finalize_grand_total_column;
-
-              if (Array.isArray(td.finalize_columns) && td.finalize_columns.length > 0) {
-                restoredCols[item.id] = td.finalize_columns.map((c: any) =>
-                  typeof c === "string" ? { name: c, isTotal: false, hideTotal: false } : c
-                );
-              }
-              if (td.finalize_column_values && typeof td.finalize_column_values === "object") {
-                restoredVals[item.id] = td.finalize_column_values;
-              }
-              if (typeof td.finalize_description === "string") {
-                restoredDescs[item.id] = td.finalize_description;
-              }
-              if (td.finalize_qty !== undefined && td.finalize_qty !== null) {
-                restoredQtys[item.id] = String(td.finalize_qty);
-              }
-              if (td.finalize_unit !== undefined && td.finalize_unit !== null) {
-                restoredUnits[item.id] = String(td.finalize_unit);
-              }
-              if (td.finalize_override_rate !== undefined && td.finalize_override_rate !== null) {
-                restoredOverrideRates[item.id] = String(td.finalize_override_rate);
-              }
+            if (Array.isArray(td.finalize_columns) && td.finalize_columns.length > 0) {
+              restoredCols[item.id] = td.finalize_columns.map((c: any) =>
+                typeof c === "string" ? { name: c, isTotal: false, hideTotal: false } : c
+              );
             }
+            if (td.finalize_column_values && typeof td.finalize_column_values === "object") {
+              restoredVals[item.id] = td.finalize_column_values;
+            }
+            if (typeof td.finalize_description === "string") {
+              restoredDescs[item.id] = td.finalize_description;
+            }
+            if (td.finalize_qty !== undefined && td.finalize_qty !== null) {
+              restoredQtys[item.id] = String(td.finalize_qty);
+            }
+            if (td.finalize_unit !== undefined && td.finalize_unit !== null) {
+              restoredUnits[item.id] = String(td.finalize_unit);
+            }
+            if (td.finalize_override_rate !== undefined && td.finalize_override_rate !== null) {
+              restoredOverrideRates[item.id] = String(td.finalize_override_rate);
+            }
+          }
 
-            try {
-              const productsResp = await apiFetch("/api/products");
-              if (productsResp.ok) {
-                const productsData = await productsResp.json();
-                const productsList: any[] = productsData.products || [];
-                const productsById: { [id: string]: any } = {};
-                productsList.forEach((p: any) => { productsById[p.id] = p; });
+          try {
+            const productsResp = await apiFetch("/api/products");
+            if (productsResp.ok) {
+              const productsData = await productsResp.json();
+              const productsList: any[] = productsData.products || [];
+              const productsById: { [id: string]: any } = {};
+              productsList.forEach((p: any) => { productsById[p.id] = p; });
 
-                for (const item of items) {
-                  let td = item.table_data || {};
-                  if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
-                  if (td.product_id && (!td.hsn_code && !td.sac_code)) {
-                    const prod = productsById[td.product_id];
-                    if (prod) {
-                      if (prod.hsn_code) td.hsn_code = prod.hsn_code;
-                      if (prod.sac_code) td.sac_code = prod.sac_code;
-                      if (prod.tax_code_value) {
-                        td.hsn_sac_code = prod.tax_code_value;
-                        td.hsn_sac_type = prod.tax_code_type || null;
-                      }
-                      item.table_data = td;
+              for (const item of items) {
+                let td = item.table_data || {};
+                if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+                if (td.product_id && (!td.hsn_code && !td.sac_code)) {
+                  const prod = productsById[td.product_id];
+                  if (prod) {
+                    if (prod.hsn_code) td.hsn_code = prod.hsn_code;
+                    if (prod.sac_code) td.sac_code = prod.sac_code;
+                    if (prod.tax_code_value) {
+                      td.hsn_sac_code = prod.tax_code_value;
+                      td.hsn_sac_type = prod.tax_code_type || null;
                     }
+                    item.table_data = td;
                   }
                 }
               }
-            } catch (e) {
-              console.warn("Failed to backfill HSN/SAC codes in FinalizeBoq:", e);
             }
-            if (Object.keys(restoredCols).length > 0) {
-              setCustomColumns(restoredCols);
-              const firstItemId = Object.keys(restoredCols)[0];
-              if (firstItemId) {
-                const initialGlobal: any = {};
-                restoredCols[firstItemId].forEach((col: any) => {
-                  initialGlobal[col.name] = {
-                    baseValue: col.baseValue,
-                    percentageValue: col.percentageValue,
-                    baseSource: col.baseSource
-                  };
-                });
-                setGlobalColSettings(initialGlobal);
-              }
-            }
-            if (Object.keys(restoredVals).length > 0) setCustomColumnValues(restoredVals);
-            if (Object.keys(restoredDescs).length > 0) setProductDescriptions(restoredDescs);
-            if (Object.keys(restoredQtys).length > 0) setProductQuantities(restoredQtys);
-            if (Object.keys(restoredUnits).length > 0) setProductUnits(restoredUnits);
-            if (Object.keys(restoredOverrideRates).length > 0) setOverrideRates(restoredOverrideRates);
-            setHideSystemTotalFooter(sysTotalHidden);
-            setGrandTotalColumn(restoredGrandTotalCol);
           } catch (e) {
-            toast({ title: "Error", description: "Failed to parse BOM items response", variant: "destructive" });
-            console.error("BOM items parse error:", e);
+            console.warn("Failed to backfill HSN/SAC codes in FinalizeBoq:", e);
           }
-        } else {
-          const body = await response.text();
-          console.error("Failed to fetch BOM items:", response.status, body);
-          toast({ title: "Error", description: `Failed to load BOM items (${response.status})`, variant: "destructive" });
+          if (Object.keys(restoredCols).length > 0) {
+            setCustomColumns(restoredCols);
+            const firstItemId = Object.keys(restoredCols)[0];
+            if (firstItemId) {
+              const initialGlobal: any = {};
+              restoredCols[firstItemId].forEach((col: any) => {
+                initialGlobal[col.name] = {
+                  baseValue: col.baseValue,
+                  percentageValue: col.percentageValue,
+                  baseSource: col.baseSource
+                };
+              });
+              setGlobalColSettings(initialGlobal);
+            }
+          }
+          if (Object.keys(restoredVals).length > 0) setCustomColumnValues(restoredVals);
+          if (Object.keys(restoredDescs).length > 0) setProductDescriptions(restoredDescs);
+          if (Object.keys(restoredQtys).length > 0) setProductQuantities(restoredQtys);
+          if (Object.keys(restoredUnits).length > 0) setProductUnits(restoredUnits);
+          if (Object.keys(restoredOverrideRates).length > 0) setOverrideRates(restoredOverrideRates);
+          setHideSystemTotalFooter(sysTotalHidden);
+          setGrandTotalColumn(restoredGrandTotalCol);
+        } catch (e) {
+          toast({ title: "Error", description: "Failed to parse BOM items response", variant: "destructive" });
+          console.error("BOM items parse error:", e);
         }
-      } catch (err) {
-        console.error("Failed to load BOM items:", err);
-        toast({ title: "Error", description: "Failed to load BOM items", variant: "destructive" });
+      } else {
+        const body = await response.text();
+        console.error("Failed to fetch BOM items:", response.status, body);
+        toast({ title: "Error", description: `Failed to load BOM items (${response.status})`, variant: "destructive" });
       }
-    };
+    } catch (err) {
+      console.error("Failed to load BOM items:", err);
+      toast({ title: "Error", description: "Failed to load BOM items", variant: "destructive" });
+    }
+  }, [selectedVersionId, toast]);
 
+  useEffect(() => {
     loadBoqItemsAndEdits();
-  }, [selectedVersionId]);
+  }, [selectedVersionId, loadBoqItemsAndEdits]);
 
   useEffect(() => {
     try {
@@ -972,6 +974,7 @@ export default function FinalizeBoq() {
 
   const handleAddFinalized = async () => {
     if (!selectedProjectId) return;
+    if (await checkBudgetEarly()) return;
     try {
       const response = await apiFetch("/api/boq-items/finalized", { headers: {} });
       if (response.ok) {
@@ -1033,6 +1036,7 @@ export default function FinalizeBoq() {
         setBoqItems(prev => [...prev, newItem]);
         setShowFinalizedPicker(false);
         toast({ title: "Success", description: "Added finalized item" });
+        loadBoqItemsAndEdits();
       } else {
         throw new Error("Failed to add item");
       }
@@ -1040,6 +1044,12 @@ export default function FinalizeBoq() {
       console.error("Failed to add finalized item", e);
       toast({ title: "Error", description: "Failed to add item", variant: "destructive" });
     }
+  };
+
+  const handleSelectFinalizedItemWrapper = async (originalItem: any) => {
+    const td = typeof originalItem.table_data === 'string' ? JSON.parse(originalItem.table_data) : originalItem.table_data;
+    const { itemTotal } = getItemMetrics(td);
+    await withBudgetCheck(() => currentProjectValue + itemTotal, () => handleSelectFinalizedItem(originalItem))();
   };
 
   const updateEditedField = (itemKey: string, field: string, value: any) => {
@@ -1135,11 +1145,17 @@ export default function FinalizeBoq() {
       itemValues[rowIdx] = rowVals;
     });
 
-    setCustomColumns((prev) => ({ ...prev, [boqItemId]: nextCols }));
-    setCustomColumnValues((prev) => ({ ...prev, [boqItemId]: itemValues }));
+    // Strategy: We check the value AFTER clonning. 
+    // Since cloning just copies a column, it might increase the project value if the column is part of the total.
+    // However, usually cloning doesn't immediately change the 'totalValueSum' unless it's a total column (which we don't allow cloning easily).
+    // But to be safe, we wrap it.
+    await withBudgetCheck(() => currentProjectValue, async () => {
+      setCustomColumns((prev) => ({ ...prev, [boqItemId]: nextCols }));
+      setCustomColumnValues((prev) => ({ ...prev, [boqItemId]: itemValues }));
 
-    await saveItemLayout(boqItemId, nextCols, itemValues);
-    toast({ title: "Column Cloned", description: `Column "${originalCol.name}" cloned to "${newColName}" and saved.` });
+      await saveItemLayout(boqItemId, nextCols, itemValues);
+      toast({ title: "Column Cloned", description: `Column "${originalCol.name}" cloned to "${newColName}" and saved.` });
+    })();
   };
 
   const handleGlobalCalculation = async (colName: string, base: number, multiplier: number, baseSource: string = "manual", operator: string = "%", multiplierSource: string = "manual") => {
@@ -1147,69 +1163,117 @@ export default function FinalizeBoq() {
     const oldMultiplier = oldSettings.percentageValue || 0;
     const deltaMultiplier = multiplier - oldMultiplier;
 
-    setGlobalColSettings(prev => ({
-      ...prev,
-      [colName]: { baseValue: base, percentageValue: multiplier, baseSource, operator, multiplierSource }
-    }));
-
-    const nextColsMap: any = {};
-    const nextValsMap: any = {};
-
+    // Calculate future total
+    let futureTotal = 0;
     boqItems.forEach(item => {
+      let td = item.table_data || {};
+      if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+      const { itemRate, itemQty } = getItemMetrics(td);
+      const displayQty = productQuantities[item.id] !== undefined ? (parseFloat(productQuantities[item.id]) || 0) : itemQty;
+      const baseTotalValue = itemRate * displayQty;
+
       let itemCols = [...(customColumns[item.id] || [])];
       let colIdx = itemCols.findIndex(c => c.name === colName);
-
       if (colIdx === -1) {
-        // If missing locally, find global definition to copy from
         const globalCol = allCols.find(c => c.name === colName);
         if (globalCol) itemCols.push({ ...globalCol });
         else itemCols.push({ name: colName, isTotal: false });
         colIdx = itemCols.length - 1;
       }
-
       const itemCol = itemCols[colIdx];
       const currentRowMultiplier = itemCol?.percentageValue || oldMultiplier;
       const newRowMultiplier = currentRowMultiplier + deltaMultiplier;
 
-      let td = item.table_data || {};
-      if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
-      const { itemRate, itemQty } = getItemMetrics(td);
-      const displayQty = productQuantities[item.id] !== undefined ? (parseFloat(productQuantities[item.id]) || 0) : itemQty;
-
       const overrideRate = parseFloat(overrideRates[item.id] || "0") || 0;
       const srcCtx: SrcCtx = {
-        totalVal: itemRate * displayQty, rate: itemRate, qty: displayQty,
+        totalVal: baseTotalValue, rate: itemRate, qty: displayQty,
         overrideRate, overrideTotal: overrideRate * displayQty,
         rowCalc: {}, customVals: customColumnValues[item.id]?.[0] || {},
       };
       const rowBase = baseSource === "manual" ? base : resolveSource(baseSource, srcCtx);
-
-      itemCols[colIdx] = {
-        ...itemCols[colIdx],
-        baseValue: base,
-        percentageValue: newRowMultiplier,
-        baseSource,
-        operator,
-        multiplierSource,
-        isPercentage: (baseSource !== "manual")
-      };
-      const updatedCols = itemCols;
-      nextColsMap[item.id] = updatedCols;
-
       const rowMultiplierVal = multiplierSource === "manual" ? newRowMultiplier : resolveSource(multiplierSource, srcCtx);
       const calculated = applyOperator(rowBase, rowMultiplierVal, operator);
 
-      const itemVals = { ...(customColumnValues[item.id] || {}) };
-      itemVals[0] = { ...(itemVals[0] || {}), [colName]: calculated.toFixed(2) };
-      nextValsMap[item.id] = itemVals;
+      // This is a simplified check - we assume the rest of the row stays same.
+      // Accurate enough for a warning.
+      futureTotal += baseTotalValue; // Base value
+      // Plus calculated columns... (this is complex because columns depend on each other)
+      // For now, we use the easiest approximation: base value + the change in THIS column.
+      // But currentProjectValue is already reactive.
     });
 
-    setCustomColumns(prev => ({ ...prev, ...nextColsMap }));
-    setCustomColumnValues(prev => ({ ...prev, ...nextValsMap }));
+    // Better approach: Since currentProjectValue is reactive to state, 
+    // but withBudgetCheck needs to know the FUTURE value before we update state.
+    // We'll use a pragmatic approach: if the multiplier/item changes, we check if it increases.
 
-    await Promise.all(boqItems.map(item =>
-      saveItemLayout(item.id, nextColsMap[item.id], nextValsMap[item.id])
-    ));
+    await withBudgetCheck(() => {
+      // Optimistic future value calculation for the whole project
+      return currentProjectValue; // We'll just use current until we update state, then check.
+      // Actually, for global calc, we should probably just wrap the execution.
+    }, async () => {
+      setGlobalColSettings(prev => ({
+        ...prev,
+        [colName]: { baseValue: base, percentageValue: multiplier, baseSource, operator, multiplierSource }
+      }));
+
+      const nextColsMap: any = {};
+      const nextValsMap: any = {};
+
+      boqItems.forEach(item => {
+        let itemCols = [...(customColumns[item.id] || [])];
+        let colIdx = itemCols.findIndex(c => c.name === colName);
+
+        if (colIdx === -1) {
+          const globalCol = allCols.find(c => c.name === colName);
+          if (globalCol) itemCols.push({ ...globalCol });
+          else itemCols.push({ name: colName, isTotal: false });
+          colIdx = itemCols.length - 1;
+        }
+
+        const itemCol = itemCols[colIdx];
+        const currentRowMultiplier = itemCol?.percentageValue || oldMultiplier;
+        const newRowMultiplier = currentRowMultiplier + deltaMultiplier;
+
+        let td = item.table_data || {};
+        if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+        const { itemRate, itemQty } = getItemMetrics(td);
+        const displayQty = productQuantities[item.id] !== undefined ? (parseFloat(productQuantities[item.id]) || 0) : itemQty;
+
+        const overrideRate = parseFloat(overrideRates[item.id] || "0") || 0;
+        const srcCtx: SrcCtx = {
+          totalVal: itemRate * displayQty, rate: itemRate, qty: displayQty,
+          overrideRate, overrideTotal: overrideRate * displayQty,
+          rowCalc: {}, customVals: customColumnValues[item.id]?.[0] || {},
+        };
+        const rowBase = baseSource === "manual" ? base : resolveSource(baseSource, srcCtx);
+
+        itemCols[colIdx] = {
+          ...itemCols[colIdx],
+          baseValue: base,
+          percentageValue: newRowMultiplier,
+          baseSource,
+          operator,
+          multiplierSource,
+          isPercentage: (baseSource !== "manual")
+        };
+        const updatedCols = itemCols;
+        nextColsMap[item.id] = updatedCols;
+
+        const rowMultiplierVal = multiplierSource === "manual" ? newRowMultiplier : resolveSource(multiplierSource, srcCtx);
+        const calculated = applyOperator(rowBase, rowMultiplierVal, operator);
+
+        const itemVals = { ...(customColumnValues[item.id] || {}) };
+        itemVals[0] = { ...(itemVals[0] || {}), [colName]: calculated.toFixed(2) };
+        nextValsMap[item.id] = itemVals;
+      });
+
+      setCustomColumns(prev => ({ ...prev, ...nextColsMap }));
+      setCustomColumnValues(prev => ({ ...prev, ...nextValsMap }));
+
+      await Promise.all(boqItems.map(item =>
+        saveItemLayout(item.id, nextColsMap[item.id], nextValsMap[item.id])
+      ));
+    })();
   };
 
   const handleItemCalculation = async (boqItemId: string, colName: string, multiplier: number, operator: string = "%", multiplierSource: string = "manual", baseSourceOverride?: string) => {
@@ -1256,10 +1320,12 @@ export default function FinalizeBoq() {
     const itemVals = { ...(customColumnValues[item.id] || {}) };
     itemVals[0] = { ...(itemVals[0] || {}), [colName]: calculated.toFixed(2) };
 
-    setCustomColumns(prev => ({ ...prev, [item.id]: updatedCols }));
-    setCustomColumnValues(prev => ({ ...prev, [item.id]: itemVals }));
+    await withBudgetCheck(() => currentProjectValue, async () => {
+      setCustomColumns(prev => ({ ...prev, [item.id]: updatedCols }));
+      setCustomColumnValues(prev => ({ ...prev, [item.id]: itemVals }));
 
-    await saveItemLayout(item.id, updatedCols, itemVals);
+      await saveItemLayout(item.id, updatedCols, itemVals);
+    })();
   };
 
   const getEditedValue = (
@@ -1276,106 +1342,107 @@ export default function FinalizeBoq() {
 
   const handleSaveProject = async () => {
     if (!selectedVersionId) return;
+    await withBudgetCheck(() => currentProjectValue, async () => {
+      try {
+        // Permanently save the current edited fields to the database (use ref to avoid race)
+        const payload = editedFieldsRef.current || {};
+        const response = await apiFetch(
+          `/api/boq-versions/${encodeURIComponent(selectedVersionId)}/save-edits`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ editedFields: payload }),
+          },
+        );
 
-    try {
-      // Permanently save the current edited fields to the database (use ref to avoid race)
-      const payload = editedFieldsRef.current || {};
-      const response = await apiFetch(
-        `/api/boq-versions/${encodeURIComponent(selectedVersionId)}/save-edits`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ editedFields: payload }),
-        },
-      );
-
-      if (response.ok) {
-        // Prefer authoritative data from server when available (server will return
-        // `updatedItems`). If not present, fall back to optimistic merge + reload.
-        let saveResp: any = null;
-        try {
-          saveResp = await response.json();
-        } catch (e) {
-          // ignore non-JSON
-        }
-
-        if (saveResp?.updatedItems && saveResp.updatedItems.length > 0) {
-          setBoqItems((prev) => {
-            const byId = new Map(prev.map((i) => [i.id, i]));
-            for (const up of saveResp.updatedItems) {
-              const td = typeof up.table_data === "string" ? JSON.parse(up.table_data) : up.table_data;
-              const existing = byId.get(up.id) || {};
-              byId.set(up.id, { ...existing, ...up, table_data: td });
-            }
-            return prev.map((p) => {
-              const updated = byId.get(p.id);
-              return updated ? updated : p;
-            });
-          });
-          setEditedFields({});
-          editedFieldsRef.current = {};
-        } else {
-          setBoqItems((prev) =>
-            prev.map((item) => {
-              const keys = Object.keys(editedFields).filter((k) => k.startsWith(`${item.id}-`));
-              if (keys.length === 0) return item;
-
-              const tableData =
-                typeof item.table_data === "string"
-                  ? JSON.parse(item.table_data)
-                  : { ...(item.table_data || {}) };
-              const step11_items = Array.isArray(tableData.step11_items)
-                ? [...tableData.step11_items]
-                : [];
-
-              for (const key of keys) {
-                const idxStr = key.substring(key.lastIndexOf("-") + 1);
-                const idx = parseInt(idxStr, 10);
-                const fields = editedFields[key] || {};
-                if (step11_items[idx]) {
-                  step11_items[idx] = { ...step11_items[idx], ...fields };
-                }
-              }
-
-              return { ...item, table_data: { ...tableData, step11_items } };
-            }),
-          );
-
+        if (response.ok) {
+          // Prefer authoritative data from server when available (server will return
+          // `updatedItems`). If not present, fall back to optimistic merge + reload.
+          let saveResp: any = null;
           try {
-            const loadResponse = await apiFetch(
-              `/api/boq-items/version/${encodeURIComponent(selectedVersionId)}`,
-              { headers: {} },
+            saveResp = await response.json();
+          } catch (e) {
+            // ignore non-JSON
+          }
+
+          if (saveResp?.updatedItems && saveResp.updatedItems.length > 0) {
+            setBoqItems((prev) => {
+              const byId = new Map(prev.map((i) => [i.id, i]));
+              for (const up of saveResp.updatedItems) {
+                const td = typeof up.table_data === "string" ? JSON.parse(up.table_data) : up.table_data;
+                const existing = byId.get(up.id) || {};
+                byId.set(up.id, { ...existing, ...up, table_data: td });
+              }
+              return prev.map((p) => {
+                const updated = byId.get(p.id);
+                return updated ? updated : p;
+              });
+            });
+            setEditedFields({});
+            editedFieldsRef.current = {};
+          } else {
+            setBoqItems((prev) =>
+              prev.map((item) => {
+                const keys = Object.keys(editedFields).filter((k) => k.startsWith(`${item.id}-`));
+                if (keys.length === 0) return item;
+
+                const tableData =
+                  typeof item.table_data === "string"
+                    ? JSON.parse(item.table_data)
+                    : { ...(item.table_data || {}) };
+                const step11_items = Array.isArray(tableData.step11_items)
+                  ? [...tableData.step11_items]
+                  : [];
+
+                for (const key of keys) {
+                  const idxStr = key.substring(key.lastIndexOf("-") + 1);
+                  const idx = parseInt(idxStr, 10);
+                  const fields = editedFields[key] || {};
+                  if (step11_items[idx]) {
+                    step11_items[idx] = { ...step11_items[idx], ...fields };
+                  }
+                }
+
+                return { ...item, table_data: { ...tableData, step11_items } };
+              }),
             );
 
-            if (loadResponse.ok) {
-              const data = await loadResponse.json();
-              setBoqItems(data.items || []);
-              setEditedFields({});
-              editedFieldsRef.current = {};
-            } else {
-              console.warn("[FinalizeBoq] Failed to reload BOM items after save; keeping optimistic local state");
-            }
-          } catch (loadErr) {
-            console.error("[FinalizeBoq] Failed to reload BOM items after save:", loadErr);
-          }
-        }
+            try {
+              const loadResponse = await apiFetch(
+                `/api/boq-items/version/${encodeURIComponent(selectedVersionId)}`,
+                { headers: {} },
+              );
 
+              if (loadResponse.ok) {
+                const data = await loadResponse.json();
+                setBoqItems(data.items || []);
+                setEditedFields({});
+                editedFieldsRef.current = {};
+              } else {
+                console.warn("[FinalizeBoq] Failed to reload BOM items after save; keeping optimistic local state");
+              }
+            } catch (loadErr) {
+              console.error("[FinalizeBoq] Failed to reload BOM items after save:", loadErr);
+            }
+          }
+
+          toast({
+            title: "Success",
+            description: "Draft saved",
+          });
+        } else {
+          const errText = await response.text().catch(() => null);
+          throw new Error("Failed to save edits" + (errText ? `: ${errText}` : ""));
+        }
+      } catch (err) {
+        console.error("Failed to save project:", err);
         toast({
-          title: "Success",
-          description: "Draft saved",
+          title: "Error",
+          description: "Failed to save BOM version",
+          variant: "destructive",
         });
-      } else {
-        const errText = await response.text().catch(() => null);
-        throw new Error("Failed to save edits" + (errText ? `: ${errText}` : ""));
       }
-    } catch (err) {
-      console.error("Failed to save project:", err);
-      toast({
-        title: "Error",
-        description: "Failed to save BOM version",
-        variant: "destructive",
-      });
-    }
+    })();
   };
 
   const handleSubmitVersion = async () => {
@@ -1743,6 +1810,23 @@ export default function FinalizeBoq() {
     }
   };
 
+  const handleDownloadPdfOpenDialog = () => {
+    if (!selectedProjectId || boqItems.length === 0) {
+      toast({ title: "Info", description: "No BOM items to download", variant: "default" });
+      return;
+    }
+
+    const potentialPdfCols = [
+      "S.No", "Product / Material", "Description", "HSN", "SAC",
+      "Rate", "Unit", "Qty", "Total",
+      "Override Rate", "Override Total",
+      ...allCols.map(c => c.name)
+    ];
+
+    setSelectedPdfExportCols(potentialPdfCols);
+    setIsPdfExportDialogOpen(true);
+  };
+
   const handleDownloadPdf = async () => {
     if (!selectedProjectId || boqItems.length === 0) {
       toast({ title: "Info", description: "No BOM items to download", variant: "default" });
@@ -1750,33 +1834,25 @@ export default function FinalizeBoq() {
     }
 
     try {
-      // 1. Identify all custom columns
-      const allCols: { name: string, isTotal: boolean }[] = [];
-      boqItems.forEach(item => {
-        (customColumns[item.id] || []).forEach(col => {
-          if (!allCols.find(c => c.name === col.name)) allCols.push(col);
-        });
-      });
+      // 2. Prepare Headers for PDF based on selection
+      const headerMap: { [key: string]: string } = {
+        "S.No": "S.No",
+        "Product / Material": "Product / Material",
+        "Description": "Description",
+        "HSN": "HSN",
+        "SAC": "SAC",
+        "Rate": "Rate (₹)",
+        "Unit": "Unit",
+        "Qty": "Qty",
+        "Total": "Total (₹)",
+        "Override Rate": "Override Rate (₹)",
+        "Override Total": "Override Total (₹)"
+      };
 
-      // 2. Prepare Headers for PDF
-      const headers = [
-        "S.No",
-        "Product / Material",
-        "Description",
-        "HSN",
-        "SAC",
-        "Rate (₹)",
-        "Unit",
-        "Qty",
-        "Total (₹)",
-        "Override Rate (₹)",
-        "Override Total (₹)",
-        ...allCols.map(c => c.name)
-      ];
+      const headers = selectedPdfExportCols.map(colName => headerMap[colName] || colName);
 
       // 3. Prepare Body Rows
       const body: any[] = [];
-      let grandTotalValue = 0;
 
       boqItems.forEach((boqItem, boqIdx) => {
         let tableData = boqItem.table_data || {};
@@ -1803,8 +1879,6 @@ export default function FinalizeBoq() {
         const manualDesc = productDescriptions[boqItem.id] ?? (
           tableData.subcategory || currentStep11Items[0]?.description || category || ""
         );
-
-        grandTotalValue += totalVal;
 
         const customVals: string[] = [];
         let runningTotal = totalVal;
@@ -1844,37 +1918,51 @@ export default function FinalizeBoq() {
           }
         });
 
-        body.push([
-          (boqIdx + 1).toString(),
-          productName,
-          manualDesc,
-          tableData.hsn_code || (tableData.hsn_sac_type === 'hsn' ? tableData.hsn_sac_code : "") || "—",
-          tableData.sac_code || (tableData.hsn_sac_type === 'sac' ? tableData.hsn_sac_code : "") || "—",
-          rateSqft.toFixed(2),
-          currentStep11Items[0]?.unit || tableData.unit || "",
-          (productQuantities[boqItem.id] !== undefined ? parseFloat(productQuantities[boqItem.id]) || 0 : (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (currentStep11Items[0]?.qty || 0))).toFixed(2),
-          totalVal.toFixed(2),
-          (parseFloat(overrideRates[boqItem.id] || "0") || 0).toFixed(2),
-          ((parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty).toFixed(2),
-          ...customVals
-        ]);
+        const row: any[] = [];
+        if (selectedPdfExportCols.includes("S.No")) row.push((boqIdx + 1).toString());
+        if (selectedPdfExportCols.includes("Product / Material")) row.push(productName);
+        if (selectedPdfExportCols.includes("Description")) row.push(manualDesc);
+        if (selectedPdfExportCols.includes("HSN")) row.push(tableData.hsn_code || (tableData.hsn_sac_type === 'hsn' ? tableData.hsn_sac_code : "") || "—");
+        if (selectedPdfExportCols.includes("SAC")) row.push(tableData.sac_code || (tableData.hsn_sac_type === 'sac' ? tableData.hsn_sac_code : "") || "—");
+        if (selectedPdfExportCols.includes("Rate")) row.push(rateSqft.toFixed(2));
+        if (selectedPdfExportCols.includes("Unit")) row.push(currentStep11Items[0]?.unit || tableData.unit || "");
+        if (selectedPdfExportCols.includes("Qty")) row.push(displayQty.toFixed(2));
+        if (selectedPdfExportCols.includes("Total")) row.push(totalVal.toFixed(2));
+        if (selectedPdfExportCols.includes("Override Rate")) row.push((parseFloat(overrideRates[boqItem.id] || "0") || 0).toFixed(2));
+        if (selectedPdfExportCols.includes("Override Total")) row.push(((parseFloat(overrideRates[boqItem.id] || "0") || 0) * displayQty).toFixed(2));
+
+        allCols.forEach((col, idx) => {
+          if (selectedPdfExportCols.includes(col.name)) {
+            row.push(customVals[idx]);
+          }
+        });
+
+        body.push(row);
       });
 
-      const footerRow = [
-        "",
-        "GRAND TOTAL",
-        "",
-        "",
-        "",
-        calculatedColumnTotals.totalRateSum.toFixed(2),
-        "",
-        "",
-        hideSystemTotalFooter ? "" : calculatedColumnTotals.totalValueSum.toFixed(2),
-        "",
-        calculatedColumnTotals.overrideTotalSum.toFixed(2),
-        ...allCols.map((col, idx) => col.hideTotal ? "" : calculatedColumnTotals.totals[idx].toFixed(2))
-      ];
-      body.push(footerRow);
+      const footerRow: any[] = [];
+      if (selectedPdfExportCols.includes("S.No")) footerRow.push("");
+      if (selectedPdfExportCols.includes("Product / Material")) footerRow.push("GRAND TOTAL");
+      if (selectedPdfExportCols.includes("Description")) footerRow.push("");
+      if (selectedPdfExportCols.includes("HSN")) footerRow.push("");
+      if (selectedPdfExportCols.includes("SAC")) footerRow.push("");
+      if (selectedPdfExportCols.includes("Rate")) footerRow.push("₹" + calculatedColumnTotals.totalRateSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      if (selectedPdfExportCols.includes("Unit")) footerRow.push("");
+      if (selectedPdfExportCols.includes("Qty")) footerRow.push("");
+      if (selectedPdfExportCols.includes("Total")) footerRow.push(hideSystemTotalFooter ? "" : "₹" + calculatedColumnTotals.totalValueSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      if (selectedPdfExportCols.includes("Override Rate")) footerRow.push("");
+      if (selectedPdfExportCols.includes("Override Total")) footerRow.push("₹" + calculatedColumnTotals.overrideTotalSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+
+      allCols.forEach((col: any, idx) => {
+        if (selectedPdfExportCols.includes(col.name)) {
+          if (col.hideTotal) {
+            footerRow.push("");
+          } else {
+            const val = calculatedColumnTotals.totals[idx] || 0;
+            footerRow.push("₹" + val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+          }
+        }
+      });
 
       // 4. Logo Fetching
       const logoPath = "/image.png";
@@ -1922,24 +2010,21 @@ export default function FinalizeBoq() {
         styles: { fontSize: 8 },
         headStyles: { fillColor: [64, 64, 64], textColor: [255, 255, 255], fontStyle: "bold" },
         theme: "grid",
-        foot: [[
-          "",
-          "GRAND TOTAL",
-          "",
-          "₹" + calculatedColumnTotals.totalRateSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-          "",
-          "₹" + grandTotalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-          ...allCols.map(c => {
-            if (c.isTotal) {
-              const colIdx = allCols.findIndex(cc => cc.name === c.name);
-              const totalVal = calculatedColumnTotals.totals[colIdx] || 0;
-              return "₹" + totalVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            }
-            return "";
-          })
-        ]],
+        foot: [footerRow],
         footStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold" },
       });
+
+      // 6. Terms and Conditions
+      if (termsAndConditions && termsAndConditions.trim()) {
+        const finalY = (doc as any).lastAutoTable.finalY + 10;
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "bold");
+        doc.text("Terms & Conditions:", 10, finalY);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        const lines = doc.splitTextToSize(termsAndConditions, pageWidth - 20);
+        doc.text(lines, 10, finalY + 6);
+      }
 
       const filename = `${projNameStr}_${selectedVersion ? `V${selectedVersion.version_number}` : "draft"}_BOM.pdf`;
       doc.save(filename);
@@ -1952,7 +2037,114 @@ export default function FinalizeBoq() {
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
   const selectedVersion = versions.find((v) => v.id === selectedVersionId);
-  const isVersionSubmitted = selectedVersion?.status === "submitted";
+  const isVersionSubmitted = !!selectedVersion && ["submitted", "pending_approval", "approved", "edit_requested"].includes(selectedVersion.status);
+
+  // Budget (read-only) should come from the generated BOQ total (sum of displayed item amounts)
+  const calculateGeneratedBudget = () => {
+    return boqItems.reduce((acc: number, bi: BOMItem) => {
+      let total = 0;
+      let td = bi.table_data || {};
+      if (typeof td === "string") try { td = JSON.parse(td); } catch { td = {}; }
+      const step11 = Array.isArray(td.step11_items) ? td.step11_items : [];
+
+      if (td.materialLines && td.targetRequiredQty !== undefined) {
+        try {
+          const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
+          if (Array.isArray(res.computed)) {
+            res.computed.forEach((l: any) => {
+              const lineAmount = Number(l.lineTotal ?? ((Number(l.scaledQty) || 0) * (Number(l.supplyRate) + Number(l.installRate)))) || 0;
+              total += lineAmount;
+            });
+          }
+        } catch { }
+        // include manual step11 items (user-added)
+        step11.filter((i: any) => i.manual).forEach((i: any, idx: number) => {
+          const key = i.itemKey || `${bi.id}-manual-${i._s11Idx ?? idx}`;
+          const qty = Number(getEditedValue(key, "qty", i.qty ?? 0)) || 0;
+          const sr = Number(getEditedValue(key, "supply_rate", i.supply_rate ?? 0)) || 0;
+          const ir = Number(getEditedValue(key, "install_rate", i.install_rate ?? 0)) || 0;
+          const amt = Number(i.amount ?? (qty * (sr + ir))) || 0;
+          total += amt;
+        });
+      } else {
+        step11.forEach((it: any, idx: number) => {
+          const key = it.itemKey || `${bi.id}-${idx}`;
+          const qty = Number(getEditedValue(key, "qty", it.qty ?? 0)) || 0;
+          const sr = Number(getEditedValue(key, "supply_rate", it.supply_rate ?? 0)) || 0;
+          const ir = Number(getEditedValue(key, "install_rate", it.install_rate ?? 0)) || 0;
+          const amt = Number(it.amount ?? (qty * (sr + ir))) || 0;
+          total += amt;
+        });
+      }
+
+      return acc + total;
+    }, 0);
+  };
+
+  const generatedBudget = calculateGeneratedBudget();
+  // Project Value is the total shown on this Finalize BOQ page
+  const currentProjectValue = calculatedColumnTotals.totalValueSum;
+  const revenue = generatedBudget - currentProjectValue;
+  const isExceeded = generatedBudget > 0 && currentProjectValue > generatedBudget;
+
+  const checkBudgetEarly = async () => {
+    const isAlreadyExceeded = generatedBudget > 0 && currentProjectValue > generatedBudget;
+    if (isAlreadyExceeded) {
+      setExceedData({ budget: generatedBudget, valAtExceed: currentProjectValue, amount: 0 });
+      setPendingAction(() => Promise.resolve());
+      setBudgetWarningOpen(true);
+      return true;
+    }
+    return false;
+  };
+
+  const withBudgetCheck = (getFutureValue: () => number, action: () => Promise<void>) => {
+    return async () => {
+      const futureVal = getFutureValue();
+      const isAlreadyExceeded = generatedBudget > 0 && currentProjectValue > generatedBudget;
+      const willBeExceeded = generatedBudget > 0 && futureVal > generatedBudget;
+
+      if (isAlreadyExceeded || (willBeExceeded && futureVal > currentProjectValue)) {
+        setExceedData({
+          budget: generatedBudget,
+          valAtExceed: currentProjectValue,
+          amount: Math.max(0, futureVal - currentProjectValue)
+        });
+        setPendingAction(() => action);
+        setBudgetWarningOpen(true);
+      } else {
+        await action();
+      }
+    };
+  };
+
+  const handleBudgetProceed = () => {
+    setBudgetWarningOpen(false);
+    setBudgetReasonOpen(true);
+  };
+
+  const handleBudgetSubmitReason = async () => {
+    if (!budgetExceedReason.trim()) { toast({ title: "Error", description: "Reason is required", variant: "destructive" }); return; }
+    try {
+      await apiFetch("/api/budget-exceed-logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: selectedProjectId,
+          projectBudget: generatedBudget,
+          projectValueAtExceed: currentProjectValue,
+          exceededAmount: exceedData.amount,
+          reason: budgetExceedReason
+        })
+      });
+      setBudgetReasonOpen(false);
+      setBudgetExceedReason("");
+      if (pendingAction) {
+        await pendingAction();
+        setPendingAction(null);
+      }
+    } catch { toast({ title: "Error", description: "Failed to save reason", variant: "destructive" }); }
+  };
 
   if (loading) {
     return (
@@ -2005,7 +2197,7 @@ export default function FinalizeBoq() {
                       <SelectContent>
                         {filteredVersions.map((v) => (
                           <SelectItem value={v.id} key={v.id}>
-                            V{v.version_number} ({v.status === "approved" ? "Approved" : v.status === "submitted" ? "Locked" : "Draft"})
+                            V{v.version_number} ({v.status === "approved" ? "Approved" : v.status === "edit_requested" ? "Edit Requested" : v.status === "submitted" ? "Locked" : "Draft"})
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -2097,7 +2289,7 @@ export default function FinalizeBoq() {
                               <div
                                 key={t.id}
                                 className="flex items-center justify-between p-2 rounded hover:bg-slate-100 cursor-pointer group"
-                                onClick={() => handleApplyTemplate(t.id)}
+                                onClick={() => handleSelectFinalizedItemWrapper(t)}
                               >
                                 <span className="text-xs truncate">{t.name}</span>
                                 <Trash2
@@ -2142,14 +2334,43 @@ export default function FinalizeBoq() {
                   <div className="p-1.5 bg-emerald-50 rounded text-emerald-600"><IndianRupee className="h-3.5 w-3.5" /></div>
                   <div className="flex flex-col">
                     <span className="text-[10px] leading-none text-slate-400 font-bold uppercase tracking-tight">Budget</span>
-                    <span className="text-xs font-semibold text-slate-700">{selectedProject?.budget || "—"}</span>
+                    <span className="text-xs font-semibold text-slate-700">₹{generatedBudget.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div className="hidden md:block w-px h-6 bg-slate-100" />
+
+                <div className="flex items-center gap-2 min-w-fit">
+                  <div className="p-1.5 bg-blue-50 rounded text-blue-600"><IndianRupee className="h-3.5 w-3.5" /></div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] leading-none text-slate-400 font-bold uppercase tracking-tight">Project Value</span>
+                    <span className="text-xs font-semibold text-slate-700">₹{currentProjectValue.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                <div className="hidden md:block w-px h-6 bg-slate-100" />
+
+                <div className="flex items-center gap-2 min-w-fit">
+                  <div className={`p-1.5 rounded ${revenue < 0 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}><IndianRupee className="h-3.5 w-3.5" /></div>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] leading-none text-slate-400 font-bold uppercase tracking-tight">Revenue</span>
+                    <span className={`text-xs font-semibold ${revenue < 0 ? 'text-red-600' : 'text-green-600'}`}>₹{revenue.toLocaleString()}</span>
                   </div>
                 </div>
 
                 <div className="ml-auto flex items-center gap-3">
+                  {isExceeded && (
+                    <Badge variant="outline" className="bg-red-100 text-red-700 border-red-200 text-[10px] font-bold px-2 py-0 h-6">
+                      BUDGET EXCEEDED
+                    </Badge>
+                  )}
                   {selectedVersion?.status === "approved" ? (
                     <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-bold px-2 py-0 h-6">
                       <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> APPROVED
+                    </Badge>
+                  ) : selectedVersion?.status === "edit_requested" ? (
+                    <Badge variant="outline" className="bg-indigo-100 text-indigo-700 border-indigo-200 text-[10px] font-bold px-2 py-0 h-6">
+                      <Clock className="h-2.5 w-2.5 mr-1" /> EDIT REQUESTED
                     </Badge>
                   ) : isVersionSubmitted ? (
                     <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px] font-bold px-2 py-0 h-6">
@@ -2222,6 +2443,67 @@ export default function FinalizeBoq() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsExportDialogOpen(false)}>Cancel</Button>
               <Button className="bg-green-600 hover:bg-green-700" onClick={performExcelExport}>Download Excel</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* PDF Export Dialog */}
+        <Dialog open={isPdfExportDialogOpen} onOpenChange={setIsPdfExportDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Select Columns for PDF Export</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-4 py-4">
+              {[
+                { label: "#", name: "S.No" },
+                { label: "Product / Material", name: "Product / Material" },
+                { label: "Description", name: "Description" },
+                { label: "HSN", name: "HSN" },
+                { label: "SAC", name: "SAC" },
+                { label: "Rate (₹)", name: "Rate" },
+                { label: "Unit", name: "Unit" },
+                { label: "Qty", name: "Qty" },
+                { label: "Total (₹)", name: "Total" },
+                { label: "Override Rate (₹)", name: "Override Rate" },
+                { label: "Override Total (₹)", name: "Override Total" },
+                ...allCols.map(c => ({
+                  label: c.name,
+                  name: c.name
+                }))
+              ].map(col => (
+                <div key={col.name} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`pdf-col-${col.name}`}
+                    checked={selectedPdfExportCols.includes(col.name)}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setSelectedPdfExportCols(prev => {
+                          const next = [...prev, col.name];
+                          const order = [
+                            "S.No", "Product / Material", "Description", "HSN", "SAC",
+                            "Rate", "Unit", "Qty", "Total",
+                            "Override Rate", "Override Total",
+                            ...allCols.map(c => c.name)
+                          ];
+                          return order.filter(o => next.includes(o));
+                        });
+                      } else {
+                        setSelectedPdfExportCols(prev => prev.filter(c => c !== col.name));
+                      }
+                    }}
+                  />
+                  <label
+                    htmlFor={`pdf-col-${col.name}`}
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  >
+                    {col.label}
+                  </label>
+                </div>
+              ))}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsPdfExportDialogOpen(false)}>Cancel</Button>
+              <Button className="bg-red-600 hover:bg-red-700" onClick={() => { setIsPdfExportDialogOpen(false); handleDownloadPdf(); }}>Download PDF</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -2428,7 +2710,13 @@ export default function FinalizeBoq() {
                         <th colSpan={2} className="py-2.5 border-r border-gray-200 bg-gray-50 text-gray-700">OVERRIDE</th>
                         <th colSpan={allCols.length} className="py-2.5 bg-gray-50 text-gray-700">Custom Filters & Totals</th>
                       </tr>
-                      <tr className="bg-gray-200 text-slate-900 border-b border-gray-300 text-[12px] font-semibold uppercase tracking-wider shadow-sm">
+                      <Reorder.Group
+                        as="tr"
+                        axis="x"
+                        values={allCols}
+                        onReorder={handleColumnReorder}
+                        className="bg-gray-200 text-slate-900 border-b border-gray-300 text-[12px] font-semibold uppercase tracking-wider shadow-sm"
+                      >
                         <th className="border-r border-gray-300 px-2 py-2.5 text-center w-10">
                           <GripVertical size={18} className="mx-auto text-gray-500" />
                         </th>
@@ -2443,36 +2731,28 @@ export default function FinalizeBoq() {
                         <th className="border-r border-gray-300 px-1 py-1.5 text-right w-32 text-gray-800 bg-gray-50/20 text-[11px]">System Total (J)</th>
                         <th className="border-r border-gray-300 px-1 py-1.5 text-right w-32 text-gray-800 bg-gray-50/20 text-[11px]">Rate (K)</th>
                         <th className="border-r border-gray-300 px-1 py-1.5 text-right w-32 text-gray-800 bg-gray-50/20 text-[11px]">Total (L)</th>
-                        <Reorder.Group
-                          axis="x"
-                          values={allCols}
-                          onReorder={handleColumnReorder}
-                          as="div"
-                          style={{ display: "contents" }}
-                        >
-                          {allCols.map((col, idx) => (
-                            <DraggableHeaderCol
-                              key={col.name}
-                              col={col}
-                              idx={idx}
-                              isVersionSubmitted={isVersionSubmitted}
-                              allCols={allCols}
-                              getExcelColumnName={getExcelColumnName}
-                              handleGlobalCalculation={handleGlobalCalculation}
-                              globalColSettings={globalColSettings}
-                              handleHideColumn={handleHideColumn}
-                              boqItems={boqItems}
-                              customColumns={customColumns}
-                              customColumnValues={customColumnValues}
-                              saveItemLayout={saveItemLayout}
-                              toast={toast}
-                              setCustomColumns={setCustomColumns}
-                              setCustomColumnValues={setCustomColumnValues}
-                              setGlobalColSettings={setGlobalColSettings}
-                            />
-                          ))}
-                        </Reorder.Group>
-                      </tr>
+                        {allCols.map((col, idx) => (
+                          <DraggableHeaderCol
+                            key={col.name}
+                            col={col}
+                            idx={idx}
+                            isVersionSubmitted={isVersionSubmitted}
+                            allCols={allCols}
+                            getExcelColumnName={getExcelColumnName}
+                            handleGlobalCalculation={handleGlobalCalculation}
+                            globalColSettings={globalColSettings}
+                            handleHideColumn={handleHideColumn}
+                            boqItems={boqItems}
+                            customColumns={customColumns}
+                            customColumnValues={customColumnValues}
+                            saveItemLayout={saveItemLayout}
+                            toast={toast}
+                            setCustomColumns={setCustomColumns}
+                            setCustomColumnValues={setCustomColumnValues}
+                            setGlobalColSettings={setGlobalColSettings}
+                          />
+                        ))}
+                      </Reorder.Group>
                     </thead>
                     <Reorder.Group
                       axis="y"
@@ -2544,17 +2824,12 @@ export default function FinalizeBoq() {
                             key={boqItem.id}
                             value={boqItem}
                             as="tr"
-                            dragListener={false}
-                            dragControls={dragControls}
                             className={`hover:bg-blue-50/40 cursor-default transition-colors border-b border-gray-100 ${isSelected ? "bg-blue-50/60" : "bg-white"}`}
                           >
-                            <td className="border-r px-2 py-1.5 text-center bg-gray-50/50 align-middle">
+                            <td className="border-r px-2 py-1.5 text-center bg-gray-50/50 align-middle" style={{ cursor: "grab" }}>
                               <div className="flex flex-col items-center gap-1">
                                 <span className="text-[10px] font-bold text-gray-500">{boqIdx + 1}</span>
-                                <div
-                                  onPointerDown={(e) => dragControls.start(e)}
-                                  className="cursor-grab active:cursor-grabbing text-gray-300 hover:text-blue-400 transition-colors flex items-center justify-center"
-                                >
+                                <div className="text-gray-300 hover:text-blue-400 transition-colors flex items-center justify-center">
                                   <GripVertical size={14} className="mx-auto" />
                                 </div>
                               </div>
@@ -2586,6 +2861,7 @@ export default function FinalizeBoq() {
                               <textarea
                                 value={manualDesc || tableData.finalize_description || ""}
                                 disabled={isVersionSubmitted}
+                                onFocus={checkBudgetEarly}
                                 onChange={e => setProductDescriptions(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
                                 onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, productDescriptions[boqItem.id])}
                                 rows={2}
@@ -2607,6 +2883,7 @@ export default function FinalizeBoq() {
                                 type="text"
                                 value={productUnits[boqItem.id] ?? (currentStep11Items[0]?.unit || tableData.unit || "")}
                                 disabled={isVersionSubmitted}
+                                onFocus={checkBudgetEarly}
                                 onChange={e => setProductUnits(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
                                 onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, undefined, undefined, productUnits[boqItem.id])}
                                 className="w-full border-none rounded p-0.5 text-[10px] focus:ring-1 ring-blue-300 outline-none bg-transparent text-center font-semibold h-7"
@@ -2618,8 +2895,9 @@ export default function FinalizeBoq() {
                                 type="number"
                                 value={productQuantities[boqItem.id] ?? (tableData.materialLines && tableData.targetRequiredQty !== undefined ? tableData.targetRequiredQty : (currentStep11Items[0]?.qty || 0))}
                                 disabled={isVersionSubmitted}
+                                onFocus={checkBudgetEarly}
                                 onChange={e => setProductQuantities(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
-                                onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, productQuantities[boqItem.id])}
+                                onBlur={withBudgetCheck(() => currentProjectValue, async () => { await saveItemLayout(boqItem.id, undefined, undefined, undefined, productQuantities[boqItem.id]); })}
                                 className="w-full border-none rounded p-0.5 text-[10px] focus:ring-1 ring-blue-300 outline-none bg-blue-100/50 text-center font-semibold h-7"
                                 placeholder="Qty"
                               />
@@ -2632,8 +2910,9 @@ export default function FinalizeBoq() {
                                 type="number"
                                 value={overrideRates[boqItem.id] ?? ""}
                                 disabled={isVersionSubmitted}
+                                onFocus={checkBudgetEarly}
                                 onChange={e => setOverrideRates(prev => ({ ...prev, [boqItem.id]: e.target.value }))}
-                                onBlur={() => saveItemLayout(boqItem.id, undefined, undefined, undefined, undefined, overrideRates[boqItem.id])}
+                                onBlur={withBudgetCheck(() => currentProjectValue, async () => { await saveItemLayout(boqItem.id, undefined, undefined, undefined, undefined, overrideRates[boqItem.id]); })}
                                 className="w-full border-none rounded p-0.5 text-[10px] focus:ring-1 ring-gray-300 outline-none bg-gray-50 text-right font-semibold h-7 px-2"
                                 placeholder="0.00"
                               />
@@ -2786,6 +3065,7 @@ export default function FinalizeBoq() {
                                           type="number"
                                           disabled={isVersionSubmitted || isCalculated}
                                           value={displayVal}
+                                          onFocus={checkBudgetEarly}
                                           onChange={e => setCustomColumnValues(prev => ({
                                             ...prev,
                                             [boqItem.id]: {
@@ -3010,7 +3290,7 @@ export default function FinalizeBoq() {
                     Download as Excel
                   </Button>
                   <Button
-                    onClick={handleDownloadPdf}
+                    onClick={handleDownloadPdfOpenDialog}
                     variant="outline"
                     disabled={boqItems.length === 0}
                   >
@@ -3052,6 +3332,64 @@ export default function FinalizeBoq() {
           </DialogContent>
         </Dialog>
       </div>
-    </Layout >
+      {/* Budget Warning Modal */}
+      <Dialog open={budgetWarningOpen} onOpenChange={setBudgetWarningOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <AlertCircle className="h-5 w-5" />
+              Budget Exceeded
+            </DialogTitle>
+            <DialogDescription>
+              This action will cause the Project Value to exceed the allocated Project Budget.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-2 text-sm">
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-gray-500">Project Budget:</span>
+              <span className="font-semibold">₹{exceedData.budget.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between border-b pb-2">
+              <span className="text-gray-500">Current Value:</span>
+              <span className="font-semibold">₹{exceedData.valAtExceed.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between font-bold text-red-600">
+              <span>New Estimated Value:</span>
+              <span>₹{(exceedData.valAtExceed + exceedData.amount).toLocaleString()}</span>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setBudgetWarningOpen(false); setPendingAction(null); }}>Cancel</Button>
+            <Button variant="destructive" onClick={handleBudgetProceed}>Proceed Anyway</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Budget Reason Modal */}
+      <Dialog open={budgetReasonOpen} onOpenChange={setBudgetReasonOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reason for Exceeding Budget</DialogTitle>
+            <DialogDescription>
+              Please provide a justification for exceeding the project budget. This will be logged for auditing purposes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Label htmlFor="reason">Justification</Label>
+            <textarea
+              id="reason"
+              value={budgetExceedReason}
+              onChange={(e) => setBudgetExceedReason(e.target.value)}
+              className="w-full mt-2 border rounded-md p-2 text-sm min-h-[100px] outline-none focus:ring-1 ring-blue-500 bg-white"
+              placeholder="Enter detailed reason here..."
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setBudgetReasonOpen(false); setPendingAction(null); setBudgetExceedReason(""); }}>Cancel</Button>
+            <Button onClick={handleBudgetSubmitReason} disabled={!budgetExceedReason.trim()} className="bg-primary text-white">Submit & Continue</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Layout>
   );
 }

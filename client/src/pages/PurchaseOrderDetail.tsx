@@ -87,6 +87,9 @@ export default function PurchaseOrderDetail() {
     const [comment, setComment] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
 
+    const searchParams = new URLSearchParams(window.location.search);
+    const mode = searchParams.get("mode");
+
     useEffect(() => {
         if (id) fetchPODetail();
     }, [id]);
@@ -251,7 +254,7 @@ export default function PurchaseOrderDetail() {
                             </Button>
                         )}
 
-                        {po.status === "pending_approval" && (
+                        {po.status === "pending_approval" && mode === "approval" && (
                             <>
                                 <Button variant="outline" className="border-red-600 text-red-600 hover:bg-red-50" onClick={() => { setApprovalAction("reject"); setShowApprovalDialog(true); }}>
                                     Reject

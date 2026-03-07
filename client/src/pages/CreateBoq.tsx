@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ChevronUp, ChevronDown, Loader2, CheckCircle2, XCircle, Lock, History, Clock, Briefcase, MapPin, IndianRupee, AlertCircle, FileText } from "lucide-react";
+import { Reorder, useDragControls } from "framer-motion";
+import { ChevronUp, ChevronDown, Loader2, CheckCircle2, XCircle, Lock, History, Clock, Briefcase, MapPin, IndianRupee, AlertCircle, FileText, GripVertical } from "lucide-react";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,7 @@ import autoTable from "jspdf-autotable";
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type Project = { id: string; name: string; client: string; budget: string; location?: string; status?: string };
-type BOMVersion = { id: string; project_id: string; version_number: number; status: "draft" | "submitted" | "pending_approval" | "approved" | "rejected"; created_at: string; rejection_reason?: string; updated_at: string; project_name?: string; project_client?: string; project_location?: string };
+type BOMVersion = { id: string; project_id: string; version_number: number; status: "draft" | "submitted" | "pending_approval" | "approved" | "rejected" | "edit_requested"; created_at: string; rejection_reason?: string; updated_at: string; project_name?: string; project_client?: string; project_location?: string };
 type BOMItem = { id: string; estimator: string; session_id: string; table_data: any; created_at: string };
 type Product = { id: string; name: string; code: string; category?: string; subcategory?: string; description?: string; category_name?: string; subcategory_name?: string; tax_code_type?: string; tax_code_value?: string; hsn_code?: string; sac_code?: string };
 type Step11Item = { id?: string; s_no?: number; title?: string; description?: string; unit?: string; qty?: number; supply_rate?: number; install_rate?: number;[key: string]: any };
@@ -46,7 +47,7 @@ const safeJson = async (res: Response): Promise<any> => {
 };
 
 const VERSION_LABEL: Record<string, string> = {
-  submitted: "Locked", pending_approval: "Pending Approval", approved: "Approved", rejected: "Rejected", draft: "Draft",
+  submitted: "Locked", pending_approval: "Pending Approval", approved: "Approved", rejected: "Rejected", draft: "Draft", edit_requested: "Edit Requested"
 };
 
 // ─── Small UI Components ───────────────────────────────────────────────────────
@@ -95,9 +96,37 @@ function VersionStatusBanner({ version }: { version: BOMVersion }) {
           <CheckCircle2 className="h-4 w-4" />
           <div><strong>Approved!</strong> This version has been approved. You can now generate Purchase Orders.</div>
         </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="bg-white border-green-200 text-green-700 hover:bg-green-100 h-8 font-bold"
+          onClick={async () => {
+            if (confirm("Are you sure you want to request approval to edit this BOM?")) {
+              try {
+                const res = await apiFetch(`/api/boq-versions/${version.id}`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ status: "edit_requested" })
+                });
+                if (res.ok) {
+                  window.location.reload(); // Simplest way to refresh state
+                }
+              } catch (err) {
+                console.error("Failed to request edit:", err);
+              }
+            }
+          }}
+        >
+          Request to Edit
+        </Button>
       </div>
     );
   }
+  if (version.status === "edit_requested") return (
+    <div className="bg-indigo-50 border border-indigo-200 rounded p-4 text-sm text-indigo-800 flex items-center gap-2">
+      <Clock className="h-4 w-4" /><div><strong>Edit Requested.</strong> Waiting for admin approval to edit this version.</div>
+    </div>
+  );
   if (version.status === "rejected") return (
     <div className="bg-red-50 border border-red-200 rounded p-4 text-sm text-red-800 space-y-1">
       <div className="flex items-center gap-2"><XCircle className="h-4 w-4" /><strong>Rejected.</strong> This version was rejected.</div>
@@ -110,12 +139,18 @@ function VersionStatusBanner({ version }: { version: BOMVersion }) {
 
 // ─── BOQ Item Row ─────────────────────────────────────────────────────────────
 
-function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersionSubmitted, getEditedValue, updateEditedField, handleDeleteRow }: {
-  item: any; itemIdx: number; boqItem: BOMItem; tableData: any; isEngineBased: boolean;
-  isVersionSubmitted: boolean; getEditedValue: (k: string, f: string, v: any) => any;
-  updateEditedField: (k: string, f: string, v: any) => void;
-  handleDeleteRow: (id: string, td: any, idx: number, item?: any) => void;
-}) {
+function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersionSubmitted,
+  getEditedValue, updateEditedField, handleDeleteRow, checkBudgetEarly,
+  isDraggable, onDragStart, onDragOver, onDrop, isDragOver }: {
+    item: any; itemIdx: number; boqItem: BOMItem; tableData: any; isEngineBased: boolean;
+    isVersionSubmitted: boolean; getEditedValue: (k: string, f: string, v: any) => any;
+    updateEditedField: (k: string, f: string, v: any) => void;
+    handleDeleteRow: (id: string, td: any, idx: number, item?: any) => void;
+    checkBudgetEarly: () => Promise<boolean>;
+    isDraggable?: boolean; onDragStart?: () => void;
+    onDragOver?: (e: React.DragEvent) => void; onDrop?: () => void;
+    isDragOver?: boolean;
+  }) {
   const itemKey = item.itemKey || `${boqItem.id}-${itemIdx}`;
   const perItemIsEngine = isEngineBased && !item.manual;
   const qty = perItemIsEngine ? (item.qty || 0) : getEditedValue(itemKey, "qty", item.qty || 0);
@@ -136,8 +171,11 @@ function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersio
       onClick={() => { if (confirm("Delete this item?")) handleDeleteRow(boqItem.id, tableData, itemIdx, item); }}>🗑</Button>
   );
 
+  const rowClass = `border-b border-gray-100 hover:bg-blue-50/50 ${isDragOver ? "bg-blue-100/60 border-t-2 border-t-blue-400" : ""}`;
+
   if (perItemIsEngine) return (
-    <tr className="border-b border-gray-100 hover:bg-blue-50/50 text-xs">
+    <tr className={`${rowClass} text-xs`}>
+      <td className="border px-1 py-1 text-center text-gray-200 w-8"><GripVertical className="h-3.5 w-3.5 mx-auto opacity-20" /></td>
       <td className="border px-2 py-1 text-center">{itemIdx + 1}</td>
       <td className="border px-2 py-1 font-medium">{item.title}<ManualBadge /></td>
       <td className="border px-2 py-1 text-gray-600">{item.shop_name || "-"}</td>
@@ -153,12 +191,22 @@ function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersio
   );
 
   return (
-    <tr className="border-b border-gray-100 hover:bg-blue-50/50">
+    <tr
+      className={rowClass}
+      draggable={isDraggable && !isLocked}
+      onDragStart={isDraggable ? onDragStart : undefined}
+      onDragOver={isDraggable ? (e) => { e.preventDefault(); onDragOver?.(e); } : undefined}
+      onDrop={isDraggable ? onDrop : undefined}
+    >
+      <td className="border px-1 py-1 text-center bg-gray-50 w-8" style={{ cursor: isLocked ? "default" : "grab" }} title="Drag to reorder">
+        <GripVertical className={`h-3.5 w-3.5 mx-auto ${isLocked ? "text-gray-200" : "text-gray-400 hover:text-blue-500"}`} />
+      </td>
       <td className="border px-2 py-1 text-center text-xs">{itemIdx + 1}</td>
       <td className="border px-2 py-1 font-medium text-xs">{item.title || "Item"}<ManualBadge /></td>
       <td className="border px-2 py-1 text-gray-600">{item.shop_name || "-"}</td>
       <td className="border px-2 py-1">
         <textarea value={description} onChange={e => updateEditedField(itemKey, "description", e.target.value)} disabled={isLocked}
+          onFocus={checkBudgetEarly}
           className="w-full border rounded px-1 py-0.5 text-xs min-h-[60px] resize-y focus:ring-1 ring-blue-500 outline-none" placeholder="Description" />
       </td>
       <td className="border px-2 py-1">
@@ -167,12 +215,14 @@ function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersio
       </td>
       <td className="border px-2 py-1 text-center">
         <input type="number" value={qty} onChange={e => updateEditedField(itemKey, "qty", parseFloat(e.target.value) || 0)} disabled={isLocked}
+          onFocus={checkBudgetEarly}
           className="w-full border rounded px-1 py-0.5 text-xs text-center font-medium focus:ring-1 ring-blue-500 outline-none" />
       </td>
       <td className="border px-2 py-1 text-center text-blue-600">{(getEditedValue(itemKey, "qty", item.qty || 0) || 0).toFixed(2)}</td>
       <td className="border px-2 py-1 font-bold text-center">-</td>
       <td className="border px-1 py-1">
         <input type="number" value={rateVal} disabled={isLocked}
+          onFocus={checkBudgetEarly}
           onChange={e => { const v = parseFloat(e.target.value) || 0; updateEditedField(itemKey, "rate", v); updateEditedField(itemKey, "supply_rate", v); updateEditedField(itemKey, "install_rate", 0); }}
           className="w-full border rounded px-1 py-0.5 text-xs text-right focus:ring-1 ring-blue-500 outline-none" placeholder="Rate" />
       </td>
@@ -182,9 +232,10 @@ function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersio
   );
 }
 
+
 // ─── BOQ Item Card ─────────────────────────────────────────────────────────────
 
-function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, setExpandedProductIds, getEditedValue, updateEditedField, handleDeleteRow, handleFinalizeProduct, handleAddItem, loadBoqItemsAndEdits, setBoqItems }: {
+function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, setExpandedProductIds, getEditedValue, updateEditedField, handleDeleteRow, handleFinalizeProduct, handleAddItem, loadBoqItemsAndEdits, setBoqItems, checkBudgetEarly }: {
   boqItem: BOMItem; boqIdx: number; isVersionSubmitted: boolean;
   expandedProductIds: Set<string>; setExpandedProductIds: (fn: (p: Set<string>) => Set<string>) => void;
   getEditedValue: (k: string, f: string, v: any) => any;
@@ -194,12 +245,21 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
   handleAddItem: (id: string) => void;
   loadBoqItemsAndEdits: () => void;
   setBoqItems: React.Dispatch<React.SetStateAction<BOMItem[]>>;
+  checkBudgetEarly: () => Promise<boolean>;
 }) {
   const tableData = parseTableData(boqItem.table_data);
   const step11Items = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
   const productName = tableData.product_name || boqItem.estimator;
   const isExpanded = expandedProductIds.has(boqItem.id);
   const toggle = () => setExpandedProductIds((prev: Set<string>) => { const n = new Set(prev); n.has(boqItem.id) ? n.delete(boqItem.id) : n.add(boqItem.id); return n; });
+
+  // Drag state for row reorder
+  const dragIdxRef = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // local ordered items state for drag reorder (non-engine)
+  const [localItems, setLocalItems] = useState<any[]>([]);
+  const [reorderInit, setReorderInit] = useState(false);
 
   let displayLines: any[] = step11Items;
   let isEngineBased = false;
@@ -233,7 +293,43 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
     });
   }
 
-  const totalAmount = displayLines.reduce((sum: number, it: any) => sum + (Number(it.amount) || 0), 0);
+  // Sync localItems when displayLines change from outside (add/delete)
+  useEffect(() => {
+    if (!isEngineBased) {
+      setLocalItems(displayLines);
+      setReorderInit(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step11Items.length, isEngineBased, boqItem.id]);
+
+  // use localItems for rendering non-engine rows (gives immediate reorder feedback)
+  const renderLines = isEngineBased ? displayLines : (reorderInit ? localItems : displayLines);
+
+  const handleRowReorder = async (newOrder: any[]) => {
+    setLocalItems(newOrder);
+    // persist the new step11_items order
+    const newStep11 = newOrder.map(item => {
+      // strip computed/display-only fields, keep originals from step11Items
+      const origIdx = item._s11Idx;
+      return origIdx !== undefined ? step11Items[origIdx] : item;
+    });
+    try {
+      const updatedTd = { ...tableData, step11_items: newStep11 };
+      const resp = await apiFetch(`/api/boq-items/${boqItem.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table_data: updatedTd }),
+      });
+      if (resp.ok) {
+        setBoqItems((prev: BOMItem[]) => prev.map((i: BOMItem) => i.id === boqItem.id ? { ...i, table_data: updatedTd } : i));
+      }
+    } catch (err) {
+      console.error("Failed to save row order", err);
+    }
+  };
+
+
+  const totalAmount = renderLines.reduce((sum: number, it: any) => sum + (Number(it.amount) || 0), 0);
   const ratePerUnit = totalAmount / (tableData.targetRequiredQty || Number(step11Items[0]?.qty) || 1);
 
   return (
@@ -256,6 +352,7 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
                 className="h-8 text-xs w-full max-w-md mt-1"
                 defaultValue={tableData.finalize_description || ""}
                 disabled={isVersionSubmitted}
+                onFocus={checkBudgetEarly}
                 onBlur={async e => {
                   const newDesc = e.target.value;
                   if (newDesc === (tableData.finalize_description || "")) return;
@@ -296,6 +393,7 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
             <table className="border-collapse text-xs min-w-full">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
+                  <th className="border px-1 py-2 text-center w-8 text-gray-400" title="Drag to reorder"><GripVertical className="h-3 w-3 mx-auto" /></th>
                   <th className="border px-2 py-2 text-left font-semibold w-10">Sl</th>
                   <th className="border px-2 py-2 text-left font-semibold w-64">Item</th>
                   <th className="border px-2 py-2 text-left font-semibold w-32">Shop</th>
@@ -310,18 +408,36 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
                 </tr>
               </thead>
               <tbody>
-                {displayLines.length === 0
-                  ? <tr><td colSpan={11} className="text-center py-4 text-gray-500 italic">No items. Click "+ Add Item" to add one.</td></tr>
-                  : displayLines.map((item: any, itemIdx: number) => (
-                    <BoqItemRow key={item.itemKey || `${boqItem.id}-${itemIdx}`} item={item} itemIdx={itemIdx} boqItem={boqItem}
+                {renderLines.length === 0
+                  ? <tr><td colSpan={12} className="text-center py-4 text-gray-500 italic">No items. Click "+ Add Item" to add one.</td></tr>
+                  : renderLines.map((item: any, itemIdx: number) => (
+                    <BoqItemRow
+                      key={item.itemKey || `${boqItem.id}-${itemIdx}`}
+                      item={item} itemIdx={itemIdx} boqItem={boqItem}
                       tableData={tableData} isEngineBased={isEngineBased} isVersionSubmitted={isVersionSubmitted}
-                      getEditedValue={getEditedValue} updateEditedField={updateEditedField} handleDeleteRow={handleDeleteRow} />
+                      getEditedValue={getEditedValue} updateEditedField={updateEditedField}
+                      handleDeleteRow={handleDeleteRow} checkBudgetEarly={checkBudgetEarly}
+                      isDraggable={!isEngineBased}
+                      isDragOver={dragOverIdx === itemIdx}
+                      onDragStart={() => { dragIdxRef.current = itemIdx; }}
+                      onDragOver={() => setDragOverIdx(itemIdx)}
+                      onDrop={() => {
+                        setDragOverIdx(null);
+                        const from = dragIdxRef.current;
+                        if (from === null || from === itemIdx) return;
+                        dragIdxRef.current = null;
+                        const newOrder = [...renderLines];
+                        const [moved] = newOrder.splice(from, 1);
+                        newOrder.splice(itemIdx, 0, moved);
+                        handleRowReorder(newOrder);
+                      }}
+                    />
                   ))
                 }
               </tbody>
               <tfoot className="bg-gray-50/50 font-bold border-t-2 border-gray-200">
                 <tr>
-                  <td colSpan={9} className="border px-2 py-1.5 text-right uppercase tracking-wider text-[10px] text-gray-500">Total</td>
+                  <td colSpan={10} className="border px-2 py-1.5 text-right uppercase tracking-wider text-[10px] text-gray-500">Total</td>
                   <td className="border px-2 py-1.5 text-right text-green-700 bg-green-50/50">₹{totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="border px-2 py-1.5"></td>
                 </tr>
@@ -412,6 +528,7 @@ export default function CreateBom() {
   const [previewVendors, setPreviewVendors] = useState<any[]>([]);
   const [isLoadingVendors, setIsLoadingVendors] = useState(false);
   const [loading, setLoading] = useState(true);
+  // Budget warning/modals removed for Generate BOM page per request
   const editedFieldsRef = useRef(editedFields);
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
@@ -560,6 +677,61 @@ export default function CreateBom() {
   const getEditedValue = (itemKey: string, field: string, original: any) =>
     editedFields[itemKey]?.[field] ?? original;
 
+  // ── Budget Helpers ──────────────────────────────────────────────────────────
+
+  const calculateCurrentProjectValue = () => {
+    // Sum amounts as displayed in the BOQ items table to ensure UI budget matches totals
+    return boqItems.reduce((acc, bi) => {
+      let total = 0;
+      const td = parseTableData(bi.table_data);
+      const step11 = Array.isArray(td.step11_items) ? td.step11_items : [];
+
+      if (td.materialLines && td.targetRequiredQty !== undefined) {
+        try {
+          const res = computeBoq(td.configBasis, td.materialLines, td.targetRequiredQty);
+          if (Array.isArray(res.computed)) {
+            res.computed.forEach((l: any) => {
+              const lineAmount = Number(l.lineTotal ?? ((Number(l.scaledQty) || 0) * (Number(l.supplyRate) + Number(l.installRate)))) || 0;
+              total += lineAmount;
+            });
+          }
+        } catch { }
+        // include manual step11 items (user-added) which are displayed below computed lines
+        step11.filter((i: any) => i.manual).forEach((i: any, idx: number) => {
+          const key = i.itemKey || `${bi.id}-manual-${i._s11Idx ?? idx}`;
+          const qty = Number(getEditedValue(key, "qty", i.qty ?? 0)) || 0;
+          const sr = Number(getEditedValue(key, "supply_rate", i.supply_rate ?? 0)) || 0;
+          const ir = Number(getEditedValue(key, "install_rate", i.install_rate ?? 0)) || 0;
+          const amt = Number(i.amount ?? (qty * (sr + ir))) || 0;
+          total += amt;
+        });
+      } else {
+        step11.forEach((it: any, idx: number) => {
+          const key = it.itemKey || `${bi.id}-${idx}`;
+          const qty = Number(getEditedValue(key, "qty", it.qty ?? 0)) || 0;
+          const sr = Number(getEditedValue(key, "supply_rate", it.supply_rate ?? 0)) || 0;
+          const ir = Number(getEditedValue(key, "install_rate", it.install_rate ?? 0)) || 0;
+          const amt = Number(it.amount ?? (qty * (sr + ir))) || 0;
+          total += amt;
+        });
+      }
+
+      return acc + total;
+    }, 0);
+  };
+
+  const selectedProject = projects.find(p => p.id === selectedProjectId);
+  const selectedVersion = versions.find(v => v.id === selectedVersionId);
+
+  const projectBudget = parseFloat(selectedProject?.budget || "0");
+  const currentProjectValue = calculateCurrentProjectValue();
+  // Simplify budget checks on Generate BOM page: always allow actions (no warnings)
+  const isExceeded = false;
+  const withBudgetCheck = (_getFutureValue: () => number, action: () => Promise<void>) => {
+    return async () => { await action(); };
+  };
+  const checkBudgetEarly = async () => false;
+
   // ── API helpers ────────────────────────────────────────────────────────────
 
   const updateBoqItem = (id: string, tableData: any) =>
@@ -591,8 +763,15 @@ export default function CreateBom() {
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
-  const handleAddProduct = () => setShowProductPicker(true);
-  const handleAddProductManual = () => { setTargetBoqItemId(null); setShowMaterialPicker(true); };
+  const handleAddProduct = async () => {
+    if (await checkBudgetEarly()) return;
+    setShowProductPicker(true);
+  };
+  const handleAddProductManual = async () => {
+    if (await checkBudgetEarly()) return;
+    setTargetBoqItemId(null);
+    setShowMaterialPicker(true);
+  };
   const handleSelectProduct = (product: Product) => { setSelectedProduct(product); setShowStep11Preview(true); };
   const handleAddItem = (boqItemId: string) => { setTargetBoqItemId(boqItemId); setShowMaterialPicker(true); };
 
@@ -602,76 +781,84 @@ export default function CreateBom() {
   };
 
   const handleAddMaterialToBoq = async (template: any) => {
-    if (!selectedProjectId || !selectedVersionId) { toast({ title: "Error", description: "Select a project and version first", variant: "destructive" }); return; }
-    try {
-      const { unit, rate, shopName, hsnSacType, hsnSacCode } = await resolveMaterialFields(template);
-      const materialItem = {
-        title: template.name,
-        description: template.technicalspecification || template.technicalSpecification || template.name,
-        unit,
-        qty: 1,
-        supply_rate: rate,
-        install_rate: 0,
-        location: "Main Area",
-        s_no: 1,
-        shop_name: shopName
-      };
-      const res = await apiFetch("/api/boq-items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: selectedProjectId,
-          version_id: selectedVersionId,
-          estimator: `material_${template.id}`,
-          table_data: {
-            product_name: template.name,
-            step11_items: [materialItem],
-            hsn_sac_type: hsnSacType,
-            hsn_sac_code: hsnSacCode,
-            finalize_description: materialItem.description
-          }
-        })
-      });
-      if (!res.ok) throw new Error(`${res.status}`);
-      toast({ title: "Success", description: `Added ${template.name} to BOM` });
-      loadBoqItemsAndEdits();
-    } catch { toast({ title: "Error", description: "Failed to add material", variant: "destructive" }); }
+    const rate = Number(template.rate ?? template.supply_rate ?? template.default_rate ?? 0) || 0;
+    const futureVal = currentProjectValue + rate;
+    await withBudgetCheck(() => futureVal, async () => {
+      if (!selectedProjectId || !selectedVersionId) { toast({ title: "Error", description: "Select a project and version first", variant: "destructive" }); return; }
+      try {
+        const { unit, rate, shopName, hsnSacType, hsnSacCode } = await resolveMaterialFields(template);
+        const materialItem = {
+          title: template.name,
+          description: template.technicalspecification || template.technicalSpecification || template.name,
+          unit,
+          qty: 1,
+          supply_rate: rate,
+          install_rate: 0,
+          location: "Main Area",
+          s_no: 1,
+          shop_name: shopName
+        };
+        const res = await apiFetch("/api/boq-items", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_id: selectedProjectId,
+            version_id: selectedVersionId,
+            estimator: `material_${template.id}`,
+            table_data: {
+              product_name: template.name,
+              step11_items: [materialItem],
+              hsn_sac_type: hsnSacType,
+              hsn_sac_code: hsnSacCode,
+              finalize_description: materialItem.description
+            }
+          })
+        });
+        if (!res.ok) throw new Error(`${res.status}`);
+        toast({ title: "Success", description: `Added ${template.name} to BOM` });
+        loadBoqItemsAndEdits();
+      } catch { toast({ title: "Error", description: "Failed to add material", variant: "destructive" }); }
+    })();
   };
 
   const handleAddItemToProduct = async (boqItemId: string, template: any) => {
-    try {
-      const existing = boqItems.find(i => i.id === boqItemId);
-      if (!existing) throw new Error("Product group not found");
-      const tableData = parseTableData(existing.table_data);
-      const currentStep11 = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
-      const { unit, rate, shopName, hsnSacType, hsnSacCode } = await resolveMaterialFields(template);
-      const newItem: Step11Item = {
-        title: template.name,
-        description: template.technicalspecification || template.technicalSpecification || template.name,
-        unit,
-        qty: 1,
-        supply_rate: rate,
-        install_rate: 0,
-        location: template.location || "Main Area",
-        s_no: currentStep11.length + 1,
-        shop_name: shopName
-      };
-      const updatedTableData = tableData.materialLines && tableData.targetRequiredQty !== undefined
-        ? { ...tableData, step11_items: [...currentStep11, { ...newItem, manual: true }] }
-        : { ...tableData, step11_items: [...currentStep11, newItem], hsn_sac_type: hsnSacType, hsn_sac_code: hsnSacCode };
-      if (!tableData.hsn_sac_type && !tableData.hsn_sac_code && (hsnSacType || hsnSacCode)) {
-        updatedTableData.hsn_sac_type = hsnSacType;
-        updatedTableData.hsn_sac_code = hsnSacCode;
-      }
-      if (!tableData.finalize_description || tableData.finalize_description.trim() === "") {
-        updatedTableData.finalize_description = newItem.description;
-      }
-      setBoqItems(prev => prev.map(i => i.id === boqItemId ? { ...i, table_data: updatedTableData } : i));
-      const res = await updateBoqItem(boqItemId, updatedTableData);
-      if (!res.ok) throw new Error("Failed to update");
-      toast({ title: "Success", description: `Added ${template.name}` });
-      loadBoqItemsAndEdits();
-    } catch { toast({ title: "Error", description: "Failed to add item", variant: "destructive" }); }
+    const rate = Number(template.rate ?? template.supply_rate ?? template.default_rate ?? 0) || 0;
+    const futureVal = currentProjectValue + rate;
+    await withBudgetCheck(() => futureVal, async () => {
+      try {
+        const existing = boqItems.find(i => i.id === boqItemId);
+        if (!existing) throw new Error("Product group not found");
+        const tableData = parseTableData(existing.table_data);
+        const currentStep11 = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
+        const { unit, rate, shopName, hsnSacType, hsnSacCode } = await resolveMaterialFields(template);
+        const newItem: Step11Item = {
+          title: template.name,
+          description: template.technicalspecification || template.technicalSpecification || template.name,
+          unit,
+          qty: 1,
+          supply_rate: rate,
+          install_rate: 0,
+          location: template.location || "Main Area",
+          s_no: currentStep11.length + 1,
+          shop_name: shopName
+        };
+        const updatedTableData = tableData.materialLines && tableData.targetRequiredQty !== undefined
+          ? { ...tableData, step11_items: [...currentStep11, { ...newItem, manual: true }] }
+          : { ...tableData, step11_items: [...currentStep11, newItem], hsn_sac_type: hsnSacType, hsn_sac_code: hsnSacCode };
+        if (!tableData.hsn_sac_type && !tableData.hsn_sac_code && (hsnSacType || hsnSacCode)) {
+          updatedTableData.hsn_sac_type = hsnSacType;
+          updatedTableData.hsn_sac_code = hsnSacCode;
+        }
+        if (!tableData.finalize_description || tableData.finalize_description.trim() === "") {
+          updatedTableData.finalize_description = newItem.description;
+        }
+        setBoqItems(prev => prev.map(i => i.id === boqItemId ? { ...i, table_data: updatedTableData } : i));
+        const res = await updateBoqItem(boqItemId, updatedTableData);
+        if (!res.ok) throw new Error("Failed to update");
+        toast({ title: "Success", description: `Added ${template.name}` });
+        loadBoqItemsAndEdits();
+      } catch { toast({ title: "Error", description: "Failed to add item", variant: "destructive" }); }
+    })();
   };
 
   const handleFinalizeProduct = async (boqItemId: string) => {
@@ -713,7 +900,7 @@ export default function CreateBom() {
     setTargetRequiredQty(100); setPendingItems(selectedItems); setTargetQtyModalOpen(true);
   };
 
-  const confirmAddToBom = async () => {
+  const confirmAddToBom = withBudgetCheck(() => currentProjectValue, async () => {
     if (!selectedProduct || !selectedProjectId || !selectedVersionId) return;
     setTargetQtyModalOpen(false);
     try {
@@ -739,7 +926,7 @@ export default function CreateBom() {
       setShowStep11Preview(false); setSelectedProduct(null); setPendingItems([]);
       loadBoqItemsAndEdits();
     } catch { toast({ title: "Error", description: "Failed to add product", variant: "destructive" }); }
-  };
+  });
 
   const handleSaveProject = async () => {
     if (!selectedVersionId) return;
@@ -889,9 +1076,11 @@ export default function CreateBom() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  const selectedProject = projects.find(p => p.id === selectedProjectId);
-  const selectedVersion = versions.find(v => v.id === selectedVersionId);
-  const isVersionSubmitted = !!selectedVersion && ["submitted", "pending_approval", "approved"].includes(selectedVersion.status);
+  const isVersionSubmitted = !!selectedVersion && ["submitted", "pending_approval", "approved", "edit_requested"].includes(selectedVersion.status);
+
+
+
+  // Budget reason logging removed for Generate BOM page
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1012,7 +1201,7 @@ export default function CreateBom() {
                       <div className="p-1.5 bg-emerald-50 rounded text-emerald-600"><IndianRupee className="h-3.5 w-3.5" /></div>
                       <div className="flex flex-col">
                         <span className="text-[10px] leading-none text-slate-400 font-bold uppercase tracking-tight">Budget</span>
-                        <span className="text-xs font-semibold text-slate-700">₹{parseFloat(selectedProject?.budget || "0").toLocaleString()}</span>
+                        <span className="text-xs font-semibold text-slate-700">₹{currentProjectValue.toLocaleString()}</span>
                       </div>
                     </div>
 
@@ -1020,6 +1209,10 @@ export default function CreateBom() {
                       {selectedVersion.status === "approved" ? (
                         <Badge variant="outline" className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px] font-bold px-2 py-0 h-6">
                           <CheckCircle2 className="h-2.5 w-2.5 mr-1" /> APPROVED
+                        </Badge>
+                      ) : selectedVersion.status === "edit_requested" ? (
+                        <Badge variant="outline" className="bg-indigo-100 text-indigo-700 border-indigo-200 text-[10px] font-bold px-2 py-0 h-6">
+                          <Clock className="h-2.5 w-2.5 mr-1" /> EDIT REQUESTED
                         </Badge>
                       ) : isVersionSubmitted ? (
                         <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200 text-[10px] font-bold px-2 py-0 h-6">
@@ -1078,7 +1271,8 @@ export default function CreateBom() {
                         expandedProductIds={expandedProductIds} setExpandedProductIds={setExpandedProductIds}
                         getEditedValue={getEditedValue} updateEditedField={updateEditedField}
                         handleDeleteRow={handleDeleteRow} handleFinalizeProduct={handleFinalizeProduct}
-                        handleAddItem={handleAddItem} loadBoqItemsAndEdits={loadBoqItemsAndEdits} setBoqItems={setBoqItems} />
+                        handleAddItem={handleAddItem} loadBoqItemsAndEdits={loadBoqItemsAndEdits} setBoqItems={setBoqItems}
+                        checkBudgetEarly={checkBudgetEarly} />
                     ))}
                   </div>
                 }
@@ -1092,7 +1286,7 @@ export default function CreateBom() {
               <CardContent className="space-y-3 pt-6">
                 {selectedVersion && <VersionStatusBanner version={selectedVersion} />}
                 <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                  <Button onClick={handleSaveProject} variant="outline" disabled={isVersionSubmitted || Object.keys(editedFields).length === 0}>Save Draft</Button>
+                  <Button onClick={withBudgetCheck(() => currentProjectValue, handleSaveProject)} variant="outline" disabled={isVersionSubmitted || Object.keys(editedFields).length === 0}>Save Draft</Button>
                   <Button onClick={() => handleSubmitVersion("submitted")} variant="outline" className="border-primary text-primary hover:bg-primary/5 font-bold" disabled={isVersionSubmitted || boqItems.length === 0}>Lock Version</Button>
                   <Button onClick={() => handleSubmitVersion("pending_approval")} variant="default" className="bg-primary hover:bg-primary/90 font-bold" disabled={isVersionSubmitted || boqItems.length === 0}>Submit for Approval</Button>
                   <Button
@@ -1129,7 +1323,13 @@ export default function CreateBom() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTargetQtyModalOpen(false)}>Cancel</Button>
-            <Button onClick={confirmAddToBom} className="bg-primary text-white font-bold">Add to BOM</Button>
+            <Button onClick={withBudgetCheck(() => {
+              let addon = 0;
+              pendingItems.forEach(i => {
+                addon += (Number(i.qty) || 1) * ((Number(i.supply_rate) || 0) + (Number(i.install_rate) || 0));
+              });
+              return currentProjectValue + (addon * targetRequiredQty);
+            }, confirmAddToBom)} className="bg-primary text-white font-bold">Add to BOM</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1190,6 +1390,7 @@ export default function CreateBom() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Budget warning dialogs removed for Generate BOM page */}
     </>
   );
 }

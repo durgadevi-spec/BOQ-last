@@ -593,6 +593,83 @@ export function Sidebar() {
             </>
           )}
 
+          {/* PO Requests Section */}
+          {!isContractor && user?.role !== "supplier" && (
+            <>
+              <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                PO Requests
+              </div>
+              <Link href="/raise-po-request">
+                <span
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                    location === "/raise-po-request"
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent",
+                  )}
+                  onClick={() => setIsOpen(false)}
+                >
+                  <FileText className="h-4 w-4" /> Raise PO Request
+                  <Badge variant="outline" className="ml-auto text-[9px] px-1 py-0 h-3.5 border-amber-200 bg-amber-50 text-amber-700 font-medium tracking-wide leading-none flex items-center">
+                    Under Const.
+                  </Badge>
+                </span>
+              </Link>
+              <Link href="/my-po-requests">
+                <span
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                    location === "/my-po-requests"
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent",
+                  )}
+                  onClick={() => setIsOpen(false)}
+                >
+                  <ClipboardCheck className="h-4 w-4" /> My Requests
+                  <Badge variant="outline" className="ml-auto text-[9px] px-1 py-0 h-3.5 border-amber-200 bg-amber-50 text-amber-700 font-medium tracking-wide leading-none flex items-center">
+                    Under Const.
+                  </Badge>
+                </span>
+              </Link>
+              {isAdminOrSoftware && (
+                <>
+                  <Link href="/admin/po-request-approvals">
+                    <span
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                        location === "/admin/po-request-approvals"
+                          ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent",
+                      )}
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <CheckCircle2 className="h-4 w-4" /> Pending Approvals
+                      <Badge variant="outline" className="ml-auto text-[9px] px-1 py-0 h-3.5 border-amber-200 bg-amber-50 text-amber-700 font-medium tracking-wide leading-none flex items-center">
+                        Under Const.
+                      </Badge>
+                    </span>
+                  </Link>
+                  <Link href="/admin/approved-po-requests">
+                    <span
+                      className={cn(
+                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                        location === "/admin/approved-po-requests"
+                          ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent",
+                      )}
+                      onClick={() => setIsOpen(false)}
+                    >
+                      <ShoppingCart className="h-4 w-4" /> Approved Requests
+                      <Badge variant="outline" className="ml-auto text-[9px] px-1 py-0 h-3.5 border-amber-200 bg-amber-50 text-amber-700 font-medium tracking-wide leading-none flex items-center">
+                        Under Const.
+                      </Badge>
+                    </span>
+                  </Link>
+                </>
+              )}
+            </>
+          )}
+
           {/* Approvals Section */}
           {(isAdminOrSoftwareOrPurchaseTeam || isProductManager) && !isPreSales && !isContractor && (
             <>
