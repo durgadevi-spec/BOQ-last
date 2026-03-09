@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,19 +17,15 @@ export default function RaisePORequest() {
     const { toast } = useToast();
     const [, setLocation] = useLocation();
 
-    const [projectId, setProjectId] = useState("");
+    const [projectName, setProjectName] = useState("");
+    const [department, setDepartment] = useState<string>(user?.department || "");
     const [items, setItems] = useState([{ item: "", category: "", subcategory: "", unit: "", qty: "" as number | "", remarks: "" }]);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Fetch Projects
-    const { data: projectsData, isLoading: isLoadingProjects } = useQuery({
-        queryKey: ['/api/boq-projects'],
-        queryFn: async () => {
-            const res = await apiFetch('/api/boq-projects');
-            if (!res.ok) throw new Error("Failed to load projects");
-            return res.json();
-        }
-    });
+    useEffect(() => {
+        setDepartment(user?.department || "");
+    }, [user]);
+
 
     // Fetch Materials (for Item selection)
     const { data: materialsData, isLoading: isLoadingMaterials } = useQuery({
@@ -41,7 +37,18 @@ export default function RaisePORequest() {
         }
     });
 
-    const boqProjects = projectsData?.projects || [];
+    // Fetch existing projects so we can supply a projectId (server requires it)
+    const { data: projectsData } = useQuery({
+        queryKey: ['/api/boq-projects'],
+        queryFn: async () => {
+            const res = await apiFetch('/api/boq-projects');
+            if (!res.ok) throw new Error('Failed to load projects');
+            return res.json();
+        }
+    });
+
+    const projects = projectsData?.projects || [];
+
     const materials = materialsData?.materials || [];
 
     const handleAddItem = () => {
@@ -76,16 +83,18 @@ export default function RaisePORequest() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!projectId) {
-            return toast({ title: "Validation Error", description: "Please select a project", variant: "destructive" });
+        if (!projectName.trim()) {
+            return toast({ title: "Validation Error", description: "Please enter a project name", variant: "destructive" });
         }
+
+        // Try to match an existing project. If none found, allow manual entry
+        // but send a fallback projectId string so the server validation succeeds.
+        const matchedProject = projects.find((p: any) => (p.name || '').toLowerCase() === projectName.trim().toLowerCase());
 
         const validItems = items.filter(i => i.item && i.qty && Number(i.qty) > 0);
         if (validItems.length === 0) {
             return toast({ title: "Validation Error", description: "Please add at least one item with a valid quantity > 0", variant: "destructive" });
         }
-
-        const pName = boqProjects.find((p: any) => p.id === projectId)?.name || "";
 
         setIsSubmitting(true);
         try {
@@ -93,8 +102,10 @@ export default function RaisePORequest() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    projectId,
-                    projectName: pName,
+                    projectId: matchedProject?.id || `manual:${projectName.trim()}`,
+                    projectName: projectName.trim(),
+                    employeeId: user?.employeeCode || undefined,
+                    department: department || user?.department || undefined,
                     items: validItems
                 }),
             });
@@ -144,16 +155,12 @@ export default function RaisePORequest() {
 
                             <div className="space-y-2 lg:col-span-2">
                                 <Label htmlFor="project">Project Name <span className="text-red-500">*</span></Label>
-                                <Select value={projectId} onValueChange={setProjectId} disabled={isLoadingProjects}>
-                                    <SelectTrigger id="project">
-                                        <SelectValue placeholder="Select Project" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {boqProjects.map((p: any) => (
-                                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                <Input
+                                    id="project"
+                                    value={projectName}
+                                    onChange={(e) => setProjectName(e.target.value)}
+                                    placeholder="Enter project name"
+                                />
                             </div>
 
                             <div className="space-y-2">
@@ -163,7 +170,7 @@ export default function RaisePORequest() {
 
                             <div className="space-y-2">
                                 <Label>Department</Label>
-                                <Input value={user?.department || "N/A"} disabled className="bg-slate-50" />
+                                <Input value={department} onChange={(e) => setDepartment(e.target.value)} placeholder="Enter department" />
                             </div>
 
                         </CardContent>

@@ -5,7 +5,7 @@ export type Product = {
   id: string;
   name: string;
   code: string;
-  category?: string;
+  category?: string;                            
   subcategory?: string;
   description?: string;
   category_name?: string;
@@ -24,7 +24,7 @@ export function useProductFromUrl(step: number) {
     if (typeof window === "undefined" || step !== 11) {
       setProduct(null);
       return;
-    }
+    }                                                         
 
     const urlParams = new URLSearchParams(window.location.search);
     const productId = urlParams.get("product");
@@ -55,10 +55,10 @@ export function useProductFromUrl(step: number) {
     loadProductData();
   }, [step]);
 
-  return { product, isLoading };
-}
+  return { product, isLoading }; 
+}                
 
-/**
+/**        
  * Map a product subcategory to an estimator type
  * Used when navigating from product picker to the correct estimator
  */

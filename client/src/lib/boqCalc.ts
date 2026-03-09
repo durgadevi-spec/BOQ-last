@@ -75,8 +75,14 @@ export function computeBoq(
         const wastagePctUsed = applyW ? (rowW !== undefined ? rowW : defaultW) : 0;
 
         const wastageQty = baseQty * wastagePctUsed;
-        const effectiveQty = baseQty + wastageQty;
-        const perUnitQty = base > 0 ? effectiveQty / base : 0;
+        const effectiveQtyAtBasis = baseQty + wastageQty;
+
+        // Excel Logic: The rounding happens at the "Basis" level (the recipe).
+        // This establishes a fixed "Rounded Qty per Basis Unit" which is then scaled linearly.
+        // Example: If 16.5 units are needed for 100 Sqft, we round to 17. 
+        // The rate becomes 17/100 = 0.17 per Sqft.
+        const roundedQtyAtBasis = Math.ceil(effectiveQtyAtBasis);
+        const perUnitQty = base > 0 ? roundedQtyAtBasis / base : 0;
 
         const scaledQty = perUnitQty * target;
         const roundOffQty = Math.ceil(scaledQty);
@@ -92,7 +98,7 @@ export function computeBoq(
             ...l,
             wastagePctUsed,
             wastageQty,
-            effectiveQty,
+            effectiveQty: effectiveQtyAtBasis,
             perUnitQty,
             scaledQty,
             roundOffQty,

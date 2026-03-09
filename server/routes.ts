@@ -5996,7 +5996,12 @@ export async function registerRoutes(
     async (_req: Request, res: Response) => {
       try {
         const result = await query(
-          "SELECT * FROM product_approvals ORDER BY created_at DESC"
+          `SELECT p.*, 
+            (SELECT COUNT(*) FROM product_approvals p2 
+             WHERE p2.product_id = p.product_id 
+             AND p2.config_name = p.config_name) as submission_count
+           FROM product_approvals p 
+           ORDER BY p.created_at DESC`
         );
         res.json({ approvals: result.rows });
       } catch (err) {

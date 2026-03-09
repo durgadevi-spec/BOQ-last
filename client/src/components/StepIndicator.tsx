@@ -17,15 +17,15 @@ export function StepIndicator({ steps, currentStep, onStepClick }: StepIndicator
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-8">
-        {steps.map((step, index) => (
-          <div key={step.number} className="flex items-center flex-1">
+        {steps.map((step, index) => (  
+          <div key={step.number} className="flex items-center flex-1">  
             <button
               onClick={() => onStepClick?.(step.number)}
               className={cn(
                 "flex flex-col items-center cursor-pointer transition-all",
                 currentStep >= step.number ? "opacity-100" : "opacity-60"
               )}
-            >
+            > 
               <div
                 className={cn(
                   "h-12 w-12 rounded-full flex items-center justify-center font-bold text-sm transition-all",
@@ -34,14 +34,14 @@ export function StepIndicator({ steps, currentStep, onStepClick }: StepIndicator
                     : currentStep === step.number
                     ? "bg-blue-600 text-white scale-110 shadow-lg"
                     : "bg-muted text-muted-foreground border-2 border-border"
-                )}
-              >
+                )}           
+              >                                                                                                         
                 {currentStep > step.number ? (
                   <CheckCircle2 className="h-6 w-6" />
                 ) : (
                   step.number
                 )}
-              </div>
+              </div>   
               <span className={cn(
                 "text-xs font-semibold mt-2 text-center whitespace-nowrap",
                 currentStep === step.number && "text-blue-600"

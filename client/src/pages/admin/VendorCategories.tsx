@@ -35,7 +35,7 @@ export default function VendorCategories() {
     } finally {
       setLoading(false);
     }
-  };
+  };        
 
   useEffect(() => { loadCategories(); }, []);
 
@@ -146,8 +146,8 @@ export default function VendorCategories() {
                 )}
               </div>
             </form>
-          </CardContent>
-        </Card>
+          </CardContent>                     
+        </Card> 
 
         <Card>
           <CardHeader>
@@ -197,3 +197,4 @@ export default function VendorCategories() {
     </Layout>
   );
 }
+  

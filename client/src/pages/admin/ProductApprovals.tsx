@@ -38,6 +38,7 @@ type Approval = {
   status: string;
   created_by: string;
   created_at: string;
+  submission_count?: number;
 };
 
 type ApprovalItem = {
@@ -199,8 +200,8 @@ export default function ProductApprovals() {
       setSelectedIds([]);
       return;
     }
-    // select all pending approval ids currently shown
-    const ids = approvals.filter(a => a.status === 'pending').map(a => a.id);
+    // select all ids currently shown
+    const ids = approvals.map(a => a.id);
     setSelectedIds(ids);
   };
 
@@ -285,7 +286,7 @@ export default function ProductApprovals() {
   };
 
   const pendingApprovals = approvals.filter(a => a.status === "pending");
-  const pendingCount = pendingApprovals.length;
+  const pendingCount = pendingApprovals.filter(a => a.status === "pending").length;
 
   return (
     <Layout>
@@ -335,7 +336,7 @@ export default function ProductApprovals() {
                         <TableHead className="w-[40px]">
                           <div className="flex items-center justify-center">
                             <Checkbox
-                              checked={pendingCount > 0 && selectedIds.length === pendingCount}
+                              checked={approvals.length > 0 && selectedIds.length === approvals.length}
                               onCheckedChange={(v) => toggleSelectAll(v as boolean)}
                               onClick={(e) => e.stopPropagation()}
                             />
@@ -366,15 +367,22 @@ export default function ProductApprovals() {
                               )}
                             </TableCell>
                             <TableCell onClick={(e) => e.stopPropagation()}>
-                              {approval.status === "pending" && (
-                                <Checkbox
-                                  checked={selectedIds.includes(approval.id)}
-                                  onCheckedChange={(v) => toggleSelect(approval.id, v as boolean)}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              )}
+                              <Checkbox
+                                checked={selectedIds.includes(approval.id)}
+                                onCheckedChange={(v) => toggleSelect(approval.id, v as boolean)}
+                                onClick={(e) => e.stopPropagation()}
+                              />
                             </TableCell>
-                            <TableCell className="font-bold">{approval.product_name}</TableCell>
+                            <TableCell className="font-bold">
+                              <div className="flex flex-col gap-1">
+                                <span>{approval.product_name}</span>
+                                {approval.submission_count && Number(approval.submission_count) > 1 && (
+                                  <Badge variant="outline" className="text-[9px] w-fit py-0 px-1.5 border-orange-200 text-orange-600 bg-orange-50 font-medium">
+                                    Resubmitted ({approval.submission_count})
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
                             <TableCell>{approval.config_name || "Default"}</TableCell>
                             <TableCell className="font-bold text-primary">
                               ₹{Number(approval.total_cost || 0).toLocaleString()}
@@ -411,9 +419,9 @@ export default function ProductApprovals() {
                               </div>
                             </TableCell>
                             <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                              {!isViewOnly && approval.status === "pending" && (
-                                <>
-                                  <div className="flex items-center justify-center gap-2">
+                              <div className="flex items-center justify-center gap-2">
+                                {!isViewOnly && approval.status === "pending" && (
+                                  <>
                                     <Button
                                       size="sm"
                                       onClick={() => handleApprove(approval.id)}
@@ -435,21 +443,20 @@ export default function ProductApprovals() {
                                     >
                                       <XCircle className="h-3 w-3 mr-1" /> Reject
                                     </Button>
-                                  </div>
-                                  {/* Delete only available for pending requests too */}
-                                  <div className="mt-2">
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      onClick={() => handleDelete(approval.id)}
-                                      disabled={actionLoading === approval.id}
-                                      className="h-8 px-3 text-red-600"
-                                    >
-                                      Delete
-                                    </Button>
-                                  </div>
-                                </>
-                              )}
+                                  </>
+                                )}
+                                {!isViewOnly && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleDelete(approval.id)}
+                                    disabled={actionLoading === approval.id}
+                                    className="h-8 px-3 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  >
+                                    Delete
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
 

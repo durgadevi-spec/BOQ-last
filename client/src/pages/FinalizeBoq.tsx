@@ -2164,7 +2164,7 @@ export default function FinalizeBoq() {
     const idx = allCols.findIndex(c => c.name === grandTotalColumn);
     return idx >= 0 ? calculatedColumnTotals.totals[idx] : 0;
   })();
-  const revenue = generatedBudget - currentProjectValue;
+  const revenue = currentProjectValue - generatedBudget;
   const isExceeded = generatedBudget > 0 && currentProjectValue > generatedBudget;
 
   const checkBudgetEarly = async () => {

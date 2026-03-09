@@ -664,18 +664,29 @@ export default function ManageProduct() {
                                     </div>
                                 )}
                                 <div className="space-y-6">
-                                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-gradient-to-r from-muted/50 to-muted/20 p-6 rounded-2xl border">
-                                        <div>
-                                            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Configuration For</h3>
-                                            <p className="text-2xl font-extrabold">{selectedProduct?.name}</p>
+                                    <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent p-6 rounded-2xl border-2 border-primary/10 shadow-sm">
+                                        <div className="flex items-center gap-4">
+                                            <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center text-white shadow-lg shadow-primary/20">
+                                                <Layers className="h-6 w-6" />
+                                            </div>
+                                            <div>
+                                                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Configuration For</h3>
+                                                <p className="text-2xl font-extrabold text-slate-900">{selectedProduct?.name}</p>
+                                            </div>
                                         </div>
-                                        <div className="text-center md:text-right flex flex-col items-center md:items-end gap-2">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-[10px] font-bold text-muted-foreground uppercase">Compact View</span>
+                                        <div className="flex flex-col md:flex-row items-center md:items-end gap-8">
+                                            <div className="flex items-center gap-3 bg-white px-3 py-1.5 rounded-lg border shadow-sm">
+                                                <span className="text-[10px] font-black text-muted-foreground uppercase tracking-tighter">Compact View</span>
                                                 <Checkbox checked={compactMode} onCheckedChange={val => setCompactMode(!!val)} />
                                             </div>
-                                            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-1">Current Total</h3>
-                                            <p className="text-4xl font-extrabold text-primary">₹{totalCost.toLocaleString()}</p>
+                                            <div className="text-center md:text-right">
+                                                <h3 className="text-[10px] font-black text-muted-foreground uppercase tracking-widest mb-1">Total Cost (for {baseRequiredQty} {requiredUnitType})</h3>
+                                                <p className="text-3xl font-black text-slate-900">₹{totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                            </div>
+                                            <div className="text-center md:text-right bg-primary/5 px-6 py-3 rounded-xl border border-primary/20">
+                                                <h3 className="text-[10px] font-black text-primary uppercase tracking-widest mb-1">Final Rate per {requiredUnitType}</h3>
+                                                <p className="text-4xl font-black text-primary">₹{(totalCost / (baseRequiredQty || 1)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                                            </div>
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-6 gap-4 p-6 bg-white rounded-xl border shadow-sm items-end">
