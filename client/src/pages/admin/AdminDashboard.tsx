@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
-import { format, differenceInDays } from "date-fns";
+import { useState, useEffect, useMemo } from "react";
+import { differenceInDays, format } from "date-fns";
+import { fuzzySearch } from "@/lib/utils";
 import { Layout } from "@/components/layout/Layout";
 import {
   Card,
@@ -560,29 +561,21 @@ export default function AdminDashboard() {
   const filteredShops = localShops.filter((s: any) => {
     // text search
     if (shopSearch) {
-      const q = shopSearch.toLowerCase();
-      const match = (s.name || "").toLowerCase().includes(q) ||
-        (s.location || "").toLowerCase().includes(q) ||
-        (s.city || "").toLowerCase().includes(q);
-      if (!match) return false;
+      if (!fuzzySearch(shopSearch, [s.name || "", s.location || "", s.city || ""])) return false;
     }
 
     // vendor category filter
     if (shopVendorCategoryFilter && shopVendorCategoryFilter !== 'all') {
-      const shopCat = (s.vendorCategory || "").toString().trim().toLowerCase();
+      const shopCat = (s.vendorCategory || s.vendor_category || "").toString().trim().toLowerCase();
       if (shopCat !== shopVendorCategoryFilter.toLowerCase()) return false;
     }
 
     return true;
   });
-
   const filteredMaterials = localMaterials.filter((m: any) => {
     // text search
     if (materialSearch) {
-      const q = materialSearch.toLowerCase();
-      const nameMatch = (m.name || "").toLowerCase().includes(q);
-      const codeMatch = (m.code || "").toLowerCase().includes(q);
-      if (!nameMatch && !codeMatch) return false;
+      if (!fuzzySearch(materialSearch, [m.name || "", m.code || ""])) return false;
     }
 
     // category filter (supports comma-separated stored categories)
@@ -601,15 +594,11 @@ export default function AdminDashboard() {
 
     // subcategory filter
     if (materialSubcategoryFilter && materialSubcategoryFilter !== 'all') {
-      const subField = (m.subcategory || "").toString().trim();
+      const subCatField = (m.subcategory || m.sub_category || m.subCategory || "").toString().trim();
       if (materialSubcategoryFilter === 'uncategorized') {
-        if (subField !== "") return false;
+        if (subCatField !== "") return false;
       } else {
-        const subMatches = subField
-          .split(",")
-          .map((s: string) => s.trim().toLowerCase())
-          .includes(materialSubcategoryFilter.toLowerCase());
-        if (!subMatches) return false;
+        if (subCatField.toLowerCase() !== materialSubcategoryFilter.toLowerCase()) return false;
       }
     }
 
@@ -2030,7 +2019,7 @@ export default function AdminDashboard() {
                       <p className="text-center text-muted-foreground py-6">No categories created yet</p>
                     ) : (
                       categories
-                        .filter(cat => cat.toLowerCase().includes(searchCategories.toLowerCase()))
+                        .filter(cat => fuzzySearch(searchCategories, cat))
                         .map((cat: string, idx: number) => {
                           const subCats = getSubCategoriesForCategory(cat);
                           return (
@@ -2207,7 +2196,7 @@ export default function AdminDashboard() {
                     ) : (
                       subCategories
                         .filter(sub => {
-                          const matchesSearch = sub.name.toLowerCase().includes(searchSubCategories.toLowerCase());
+                          const matchesSearch = fuzzySearch(searchSubCategories, sub.name);
                           const matchesCategory = filterSubCategoryByCategory === "all" ||
                             (filterSubCategoryByCategory === "uncategorized" ? !sub.category : sub.category === filterSubCategoryByCategory);
                           return matchesSearch && matchesCategory;
@@ -2495,7 +2484,7 @@ export default function AdminDashboard() {
                     ) : (
                       products
                         .filter(prod => {
-                          const matchesSearch = prod.name.toLowerCase().includes(searchProducts.toLowerCase());
+                          const matchesSearch = fuzzySearch(searchProducts, prod.name);
 
                           let matchesSubCategory = filterProductBySubCategory === "all";
                           if (filterProductBySubCategory === "uncategorized") {
@@ -2856,7 +2845,7 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="space-y-2 max-h-80 overflow-y-auto p-2">
                       {masterMaterials
-                        .filter((t: any) => (t.name + ' ' + t.code + ' ' + (t.category || '')).toLowerCase().includes(masterSearch.toLowerCase()))
+                        .filter((t: any) => fuzzySearch(masterSearch, [t.name || "", t.code || "", t.category || ""]))
                         .slice(0, 36)
                         .map((template: any) => (
                           <div key={template.id} className="p-4 border rounded flex items-center justify-between bg-white">

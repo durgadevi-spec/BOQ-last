@@ -26,6 +26,16 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
     Search,
     Plus,
     Filter,
@@ -39,6 +49,7 @@ import {
     Clock,
     XCircle,
     Truck,
+    Trash2,
 } from "lucide-react";
 import apiFetch from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -69,6 +80,7 @@ export default function PurchaseOrders() {
     const [searchQuery, setSearchQuery] = useState("");
     const [statusFilter, setStatusFilter] = useState<string>("all");
     const [projectFilter, setProjectFilter] = useState<string>("all");
+    const [deletingPo, setDeletingPo] = useState<PurchaseOrder | null>(null);
 
     useEffect(() => {
         fetchData();
@@ -96,6 +108,37 @@ export default function PurchaseOrders() {
             });
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        if (!deletingPo) return;
+        try {
+            const res = await apiFetch(`/api/purchase-orders/${deletingPo.id}`, {
+                method: "DELETE",
+            });
+            if (res.ok) {
+                toast({
+                    title: "Deleted",
+                    description: `Purchase order ${deletingPo.po_number} has been deleted.`,
+                });
+                setPurchaseOrders((prev) => prev.filter((po) => po.id !== deletingPo.id));
+            } else {
+                const data = await res.json();
+                toast({
+                    title: "Error",
+                    description: data.message || "Failed to delete purchase order.",
+                    variant: "destructive",
+                });
+            }
+        } catch (error) {
+            toast({
+                title: "Error",
+                description: "Failed to delete purchase order.",
+                variant: "destructive",
+            });
+        } finally {
+            setDeletingPo(null);
         }
     };
 
@@ -229,7 +272,7 @@ export default function PurchaseOrders() {
                                         <TableHead className="font-bold text-right">Amount</TableHead>
                                         <TableHead className="font-bold">Status</TableHead>
                                         <TableHead className="font-bold">Date</TableHead>
-                                        <TableHead className="text-right"></TableHead>
+                                        <TableHead className="text-right">Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
@@ -253,9 +296,22 @@ export default function PurchaseOrders() {
                                                     {new Date(po.created_at).toLocaleDateString()}
                                                 </TableCell>
                                                 <TableCell className="text-right">
-                                                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                                        <ChevronRight className="h-4 w-4" />
-                                                    </Button>
+                                                    <div className="flex items-center justify-end gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setDeletingPo(po);
+                                                            }}
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                                            <ChevronRight className="h-4 w-4" />
+                                                        </Button>
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
                                         ))
@@ -266,6 +322,27 @@ export default function PurchaseOrders() {
                     </CardContent>
                 </Card>
             </div>
+
+            {/* Delete Confirmation Dialog */}
+            <AlertDialog open={!!deletingPo} onOpenChange={(open) => { if (!open) setDeletingPo(null); }}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Purchase Order</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete <strong>{deletingPo?.po_number}</strong>? This will permanently remove the purchase order and all its items. This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            className="bg-red-600 hover:bg-red-700 text-white"
+                            onClick={handleDelete}
+                        >
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </Layout>
     );
 }

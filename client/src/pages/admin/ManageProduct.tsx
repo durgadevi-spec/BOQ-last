@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Layout } from "@/components/layout/Layout";
 import { computeBoq, UnitType } from "@/lib/boqCalc";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { fuzzySearch } from "@/lib/utils";
 
 type Product = { id: string; name: string; subcategory: string; created_at: string; created_by?: string };
 type Material = { id: string; name: string; unit: string; rate: number; category: string; subcategory: string; description?: string; shop_name?: string; shop_id?: string; shopId?: string; code?: string; technicalspecification?: string; created_at?: string };
@@ -122,8 +123,7 @@ export default function ManageProduct() {
 
     const filteredProducts = useMemo(() => {
         if (!productsData) return [];
-        const q = productSearch.toLowerCase();
-        return q ? productsData.filter(p => (p.name || "").toLowerCase().includes(q)) : productsData;
+        return productsData.filter(p => fuzzySearch(productSearch, p.name || ""));
     }, [productsData, productSearch]);
 
     const { data: categoriesData } = useQuery({
@@ -176,8 +176,7 @@ export default function ManageProduct() {
 
     const filteredMaterials = uniqueMaterials.filter(m => {
         if (materialSearch) {
-            const q = materialSearch.toLowerCase();
-            if (!(m.name || "").toLowerCase().includes(q) && !(m.code || "").toLowerCase().includes(q)) return false;
+            if (!fuzzySearch(materialSearch, [m.name || "", m.code || ""])) return false;
         }
         const inc = (field: string | undefined | null, val: string) => {
             if (!val || val === ALL) return true;
@@ -790,8 +789,7 @@ export default function ManageProduct() {
                                                                 {loadingMaterials ? (
                                                                     <TableRow><TableCell colSpan={4} className="text-center py-10"><Loader2 className="h-6 w-6 animate-spin mx-auto text-primary" /></TableCell></TableRow>
                                                                 ) : (uniqueMaterials || []).filter(m => {
-                                                                    const q = step3MaterialSearch.toLowerCase();
-                                                                    return (m.name || "").toLowerCase().includes(q) || (m.code || "").toLowerCase().includes(q);
+                                                                    return fuzzySearch(step3MaterialSearch, [m.name || "", m.code || ""]);
                                                                 }).map(material => (
                                                                     <TableRow key={material.id} className="hover:bg-muted/10">
                                                                         <TableCell className="font-medium">{material.name}<div className="text-[10px] text-muted-foreground">Code: {material.code || material.id}</div></TableCell>

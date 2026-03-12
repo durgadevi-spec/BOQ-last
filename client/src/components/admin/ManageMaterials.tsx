@@ -227,9 +227,9 @@ export default function ManageMaterials() {
       brandname: "",
       modelnumber: "",
       category: template.category || "",
-      subcategory: "",
+      subcategory: (template as any).subcategory || (template as any).subCategory || "",
       product: "",
-      technicalspecification: "",
+      technicalspecification: (template as any).technicalspecification || "",
       dimensions: "",
       finishtype: "",
       materialtype: "",
@@ -315,8 +315,8 @@ export default function ManageMaterials() {
             unit: best.material.unit || prev.unit || "",
             brandname: best.material.brandname || prev.brandname || "",
             modelnumber: best.material.modelnumber || prev.modelnumber || "",
-            category: best.material.category || prev.category || prev.category || "",
-            subcategory: best.material.subcategory || prev.subcategory || "",
+            category: best.material.category || prev.category || "",
+            subcategory: best.material.subcategory || best.material.subCategory || prev.subcategory || "",
             product: best.material.product || prev.product || "",
             technicalspecification: best.material.technicalspecification || prev.technicalspecification || "",
             dimensions: best.material.dimensions || prev.dimensions || "",
@@ -366,7 +366,7 @@ export default function ManageMaterials() {
             brandname: data.material.brandname || "",
             modelnumber: data.material.modelnumber || "",
             category: data.material.category || prev.category || "",
-            subcategory: data.material.subcategory || "",
+            subcategory: data.material.subcategory || data.material.subCategory || "",
             product: data.material.product || "",
             technicalspecification: data.material.technicalspecification || "",
             dimensions: data.material.dimensions || "",
@@ -622,9 +622,9 @@ export default function ManageMaterials() {
       brandname: "",
       modelnumber: "",
       category: selectedTemplate?.category || "",
-      subcategory: "",
+      subcategory: (selectedTemplate as any)?.subcategory || (selectedTemplate as any)?.subCategory || "",
       product: "",
-      technicalspecification: "",
+      technicalspecification: (selectedTemplate as any)?.technicalspecification || "",
       dimensions: "",
       finishtype: "",
       materialtype: "",
@@ -646,9 +646,9 @@ export default function ManageMaterials() {
       brandname: "",
       modelnumber: "",
       category: selectedTemplate?.category || "",
-      subcategory: "",
+      subcategory: (selectedTemplate as any)?.subcategory || (selectedTemplate as any)?.subCategory || "",
       product: "",
-      technicalspecification: "",
+      technicalspecification: (selectedTemplate as any)?.technicalspecification || "",
       dimensions: "",
       finishtype: "",
       materialtype: "",
@@ -866,7 +866,9 @@ export default function ManageMaterials() {
                         </SelectTrigger>
                         <SelectContent>
                           {products
-                            .filter((p: any) => p.subcategory === formData.subcategory)
+                            .filter((p: any) =>
+                              (p.subcategory || p.subcategory_name)?.toLowerCase().trim() === formData.subcategory?.toLowerCase().trim()
+                            )
                             .map((p: any) => (
                               <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
                             ))}

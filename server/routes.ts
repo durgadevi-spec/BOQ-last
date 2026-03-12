@@ -110,6 +110,10 @@ export async function registerRoutes(
       )
     `);
     await query(`CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts (created_at)`);
+
+    // Ensure type column exists on boq_versions for BOM vs BOQ distinction
+    await query("ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'bom'");
+    console.log("[migrations] boq_versions 'type' column ensured");
   } catch (err: unknown) {
     console.warn('[migrations] ensure alerts table failed (continuing):', (err as any)?.message || err);
   }
@@ -781,6 +785,26 @@ export async function registerRoutes(
       "[db] Could not create boq_templates table:",
       (err as any)?.message || err,
     );
+  }
+
+  // Ensure alerts table exists
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS alerts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        type TEXT NOT NULL,
+        message TEXT NOT NULL,
+        info JSONB,
+        is_read BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT now()
+      )
+    `);
+
+    // Ensure type column exists on boq_versions for BOM vs BOQ distinction
+    await query("ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS type VARCHAR(20) DEFAULT 'bom'");
+    console.log("[migrations] boq_versions 'type' column ensured");
+  } catch (err: unknown) {
+    console.warn("[migrations] failed:", (err as any)?.message || err);
   }
 
   // Ensure global_settings table exists
@@ -1573,15 +1597,15 @@ export async function registerRoutes(
             parseSafeNumeric(body.rate) || 0,
             shop_id,
             body.unit || null,
-            body.category || null,
-            body.brandName || null,
-            body.modelNumber || null,
+            body.category || body.Category || null,
+            body.brandName || body.brandname || null,
+            body.modelNumber || body.modelnumber || null,
             body.subCategory || body.subcategory || null,
             body.product || null,
             technicalspecification,
             body.dimensions || body.Dimensions || null,
             body.finishtype || body.finishType || body.FinishType || null,
-            body.metaltype || body.metalType || body.MetalType || null,
+            body.metaltype || body.metalType || body.MetalType || body.materialtype || body.materialType || null,
             body.image || null,
             JSON.stringify(attributes || {}),
             body.masterMaterialId || null,
@@ -1803,11 +1827,15 @@ export async function registerRoutes(
         "brandname",
         "modelnumber",
         "subcategory",
+        "subCategory",
         "product",
         "technicalspecification",
         "dimensions",
         "finishtype",
         "metaltype",
+        "metalType",
+        "materialtype",
+        "materialType",
         "image",
         "template_id",
         "templateId"
@@ -1816,6 +1844,11 @@ export async function registerRoutes(
           let val = body[k];
           let dbFieldName = k;
           if (k === "templateId") dbFieldName = "template_id";
+          if (k === "subCategory") dbFieldName = "subcategory";
+          if (k === "metalType" || k === "materialtype" || k === "materialType") dbFieldName = "metaltype";
+          if (k === "brandName") dbFieldName = "brandname";
+          if (k === "modelNumber") dbFieldName = "modelnumber";
+          if (k === "finishType") dbFieldName = "finishtype";
 
           if (dbFieldName === "shop_id" && val === "") val = null;
           if (dbFieldName === "rate") val = parseSafeNumeric(val);
@@ -1911,7 +1944,7 @@ export async function registerRoutes(
     "/api/materials/:id/reject",
     authMiddleware,
     requireRole("admin", "software_team", "purchase_team"),
-    async (req, res) => {
+    async (req: Request, res: Response) => {
       try {
         const id = req.params.id;
         const reason = req.body?.reason || null;
@@ -3557,10 +3590,10 @@ export async function registerRoutes(
             submission.rate,
             submission.shop_id,
             submission.unit,
-            template.category,
+            template.category || submission.category,
             submission.brandname,
             submission.modelnumber,
-            submission.subcategory,
+            template.subcategory || submission.subcategory,
             submission.product,
             submission.technicalspecification,
             submission.template_id,
@@ -3680,7 +3713,7 @@ export async function registerRoutes(
         const { name, client, budget, location, client_address, gst_no, project_value } = req.body;
         console.log('/api/boq-projects POST body ->', { name, client, budget, location, client_address, gst_no, project_value });
 
-        if (!name || !name.trim()) {
+        if (!name) {
           res.status(400).json({ message: "Project name is required" });
           return;
         }
@@ -3874,13 +3907,20 @@ export async function registerRoutes(
       try {
         const { projectId } = req.params;
 
-        const result = await query(
-          `SELECT id, project_id, project_name, project_client, project_location, version_number, status, created_at, updated_at 
-           FROM boq_versions 
-           WHERE project_id = $1 
-           ORDER BY version_number DESC`,
-          [projectId],
-        );
+        const { type } = req.query;
+        let q = `SELECT id, project_id, project_name, project_client, project_location, version_number, status, type, created_at, updated_at 
+                 FROM boq_versions 
+                 WHERE project_id = $1`;
+        const params = [projectId];
+
+        if (type) {
+          q += ` AND type = $2`;
+          params.push(type as string);
+        }
+
+        q += ` ORDER BY version_number DESC`;
+
+        const result = await query(q, params);
 
         res.json({ versions: result.rows || [] });
       } catch (err) {
@@ -3896,17 +3936,17 @@ export async function registerRoutes(
     authMiddleware,
     async (req: Request, res: Response) => {
       try {
-        const { project_id, copy_from_version } = req.body;
+        const { project_id, copy_from_version, type = 'bom' } = req.body;
 
         if (!project_id) {
           res.status(400).json({ message: "project_id is required" });
           return;
         }
 
-        // Get next version number
+        // Get next version number for this type
         const versionResult = await query(
-          `SELECT MAX(version_number) as max_version FROM boq_versions WHERE project_id = $1`,
-          [project_id],
+          `SELECT MAX(version_number) as max_version FROM boq_versions WHERE project_id = $1 AND type = $2`,
+          [project_id, type],
         );
 
         const nextVersion = (versionResult.rows[0]?.max_version || 0) + 1;
@@ -3937,9 +3977,9 @@ export async function registerRoutes(
         }
 
         await query(
-          `INSERT INTO boq_versions (id, project_id, project_name, project_client, project_location, version_number, status, column_config, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`,
-          [versionId, project_id, projectName, projectClient, projectLocation, nextVersion, "draft", initialColumnConfig],
+          `INSERT INTO boq_versions (id, project_id, project_name, project_client, project_location, version_number, status, type, column_config, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())`,
+          [versionId, project_id, projectName, projectClient, projectLocation, nextVersion, "draft", type, initialColumnConfig],
         );
 
         // Copy items from previous version if requested
@@ -3974,6 +4014,7 @@ export async function registerRoutes(
           project_id,
           version_number: nextVersion,
           status: "draft",
+          type,
         });
       } catch (err) {
         console.error("POST /api/boq-versions error", err);
@@ -4217,7 +4258,7 @@ export async function registerRoutes(
         await query("ALTER TABLE boq_versions ADD COLUMN IF NOT EXISTS is_cleared BOOLEAN DEFAULT FALSE");
 
         const result = await query(
-          "SELECT * FROM boq_versions WHERE status != 'draft' AND ((is_cleared IS FALSE OR is_cleared IS NULL) OR status = 'edit_requested') AND created_at >= '2026-03-02 00:00:00' ORDER BY created_at DESC"
+          "SELECT * FROM boq_versions WHERE type = 'bom' AND status != 'draft' AND ((is_cleared IS FALSE OR is_cleared IS NULL) OR status = 'edit_requested') AND created_at >= '2026-03-02 00:00:00' ORDER BY created_at DESC"
         );
         res.json({ approvals: result.rows });
       } catch (err) {
@@ -6856,6 +6897,32 @@ export async function registerRoutes(
     } catch (err) {
       console.error("POST /api/purchase-orders/:id/approve error:", err);
       res.status(500).json({ message: "Failed to process purchase order approval" });
+    }
+  });
+
+  // DELETE /api/purchase-orders/:id - Delete a purchase order and its items
+  app.delete("/api/purchase-orders/:id", authMiddleware, async (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+      await query("BEGIN");
+      try {
+        // Remove child items first
+        await query("DELETE FROM purchase_order_items WHERE po_id = $1", [id]);
+        const result = await query("DELETE FROM purchase_orders WHERE id = $1 RETURNING id", [id]);
+        if (result.rows.length === 0) {
+          await query("ROLLBACK");
+          res.status(404).json({ message: "Purchase order not found" });
+          return;
+        }
+        await query("COMMIT");
+        res.json({ message: "Purchase order deleted successfully" });
+      } catch (err) {
+        await query("ROLLBACK");
+        throw err;
+      }
+    } catch (err) {
+      console.error("DELETE /api/purchase-orders/:id error:", err);
+      res.status(500).json({ message: "Failed to delete purchase order" });
     }
   });
 

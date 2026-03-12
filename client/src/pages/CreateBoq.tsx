@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Reorder, useDragControls } from "framer-motion";
-import { ChevronUp, ChevronDown, Loader2, CheckCircle2, XCircle, Lock, History, Clock, Briefcase, MapPin, IndianRupee, GripVertical } from "lucide-react";
+import { ChevronUp, ChevronDown, Loader2, CheckCircle2, XCircle, Lock, History, Clock, Briefcase, MapPin, IndianRupee, GripVertical, Search } from "lucide-react";
+import { fuzzySearch } from "@/lib/utils";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -249,7 +250,7 @@ function BoqItemRow({ item, itemIdx, boqItem, tableData, isEngineBased, isVersio
 
 // ─── BOQ Item Card ─────────────────────────────────────────────────────────────
 
-function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, setExpandedProductIds, getEditedValue, updateEditedField, handleDeleteRow, handleFinalizeProduct, handleAddItem, loadBoqItemsAndEdits, setBoqItems, checkBudgetEarly, handleSaveProject }: {
+function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, setExpandedProductIds, getEditedValue, updateEditedField, handleDeleteRow, handleFinalizeProduct, handleAddItem, loadBoqItemsAndEdits, setBoqItems, checkBudgetEarly, handleSaveProject, onCardDragStart, onCardDragOver, onCardDrop, isCardDragOver }: {
   boqItem: BOMItem; boqIdx: number; isVersionSubmitted: boolean;
   expandedProductIds: Set<string>; setExpandedProductIds: (fn: (p: Set<string>) => Set<string>) => void;
   getEditedValue: (k: string, f: string, v: any) => any;
@@ -261,6 +262,10 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
   setBoqItems: React.Dispatch<React.SetStateAction<BOMItem[]>>;
   checkBudgetEarly: () => Promise<boolean>;
   handleSaveProject: () => Promise<void>;
+  onCardDragStart?: (e: React.DragEvent) => void;
+  onCardDragOver?: (e: React.DragEvent) => void;
+  onCardDrop?: (e: React.DragEvent) => void;
+  isCardDragOver?: boolean;
 }) {
   const tableData = parseTableData(boqItem.table_data);
   const step11Items = Array.isArray(tableData.step11_items) ? tableData.step11_items : [];
@@ -374,11 +379,18 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
   const ratePerUnit = totalAmount / (tableData.targetRequiredQty || (Number(displayLines[0]?.qty) || Number(step11Items[0]?.qty) || 1));
 
   return (
-    <div className="border rounded-lg overflow-hidden">
+    <div
+      className={`border rounded-lg overflow-hidden transition-all ${isCardDragOver ? 'ring-2 ring-blue-400 bg-blue-50/30' : ''}`}
+      draggable={!isVersionSubmitted}
+      onDragStart={onCardDragStart}
+      onDragOver={onCardDragOver}
+      onDrop={onCardDrop}
+    >
       {/* Header */}
       <div className="bg-gray-100 px-4 py-3 flex justify-between items-center border-b border-gray-200">
         <div className="flex flex-col gap-0.5">
           <div className="flex items-center gap-2 font-semibold text-sm text-gray-800">
+            <GripVertical className={`h-4 w-4 flex-shrink-0 ${isVersionSubmitted ? 'text-gray-200' : 'text-gray-400 hover:text-blue-500 cursor-grab'}`} />
             {boqIdx + 1}. {productName}
             {tableData.category && <span className="text-xs text-gray-500 font-normal">({tableData.category})</span>}
             {tableData.is_finalized && <span className="inline-block bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-semibold ml-2">Finalized</span>}
@@ -387,7 +399,23 @@ function BoqItemCard({ boqItem, boqIdx, isVersionSubmitted, expandedProductIds, 
             </Button>
           </div>
           <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-4 mt-1">
+              <div className="flex flex-col bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-sm">
+                <span className="text-[10px] leading-none text-slate-400 font-bold uppercase tracking-tight mb-1">Rate per {tableData.configBasis?.requiredUnitType || "Unit"}</span>
+                <span className="text-sm font-extrabold text-blue-700">₹{ratePerUnit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              </div>
+              <div className="flex flex-col bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-sm">
+                <span className="text-[10px] leading-none text-slate-400 font-bold uppercase tracking-tight mb-1">Grand Total</span>
+                <span className="text-sm font-extrabold text-slate-900">
+                  ₹{(() => {
+                    const targetQty = tableData.targetRequiredQty || (Number(displayLines[0]?.qty) || Number(step11Items[0]?.qty) || 1);
+                    const displayRate = Number(ratePerUnit.toFixed(2));
+                    return (targetQty * displayRate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                  })()}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap mt-2">
               <Input
                 placeholder="Enter product description..."
                 className="h-8 text-xs w-full max-w-md mt-1"
@@ -592,6 +620,9 @@ export default function CreateBom() {
   const [targetBoqItemId, setTargetBoqItemId] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [editedFields, setEditedFields] = useState<Record<string, any>>({});
+  const [productSearch, setProductSearch] = useState("");
+  const cardDragIdxRef = useRef<number | null>(null);
+  const [cardDragOverIdx, setCardDragOverIdx] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   // Budget warning/modals removed for Generate BOM page per request
   const editedFieldsRef = useRef(editedFields);
@@ -601,10 +632,10 @@ export default function CreateBom() {
 
   useEffect(() => { editedFieldsRef.current = editedFields; }, [editedFields]);
 
-  // Auto-expand new products
+  // Auto-expand new products (kept empty to stay collapsed by default)
   useEffect(() => {
-    setExpandedProductIds((prev: Set<string>) => { const n = new Set(prev); boqItems.forEach((it: BOMItem) => n.add(it.id)); return n; });
-  }, [boqItems]);
+    // setExpandedProductIds(...) removed to stay collapsed by default
+  }, [boqItems.length]);
 
   // Load projects
   useEffect(() => {
@@ -1575,18 +1606,52 @@ export default function CreateBom() {
           {selectedProjectId && (
             <Card>
               <CardContent className="space-y-4 pt-6">
-                <h2 className="text-lg font-semibold">BOQ Items</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold text-gray-800">BOQ Items</h2>
+                  <div className="relative w-72">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Search products..."
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                      className="pl-9 h-9 text-sm border-slate-200 focus:ring-blue-500 shadow-sm"
+                    />
+                  </div>
+                </div>
                 {boqItems.length === 0
                   ? <div className="text-gray-500 text-center py-4">No products added yet. Click Add Product +</div>
-                  : <div className="space-y-8">
-                    {boqItems.map((boqItem: BOMItem, boqIdx: number) => (
-                      <BoqItemCard key={boqItem.id} boqItem={boqItem} boqIdx={boqIdx} isVersionSubmitted={isVersionSubmitted}
-                        expandedProductIds={expandedProductIds} setExpandedProductIds={setExpandedProductIds}
-                        getEditedValue={getEditedValue} updateEditedField={updateEditedField}
-                        handleDeleteRow={handleDeleteRow} handleFinalizeProduct={handleFinalizeProduct}
-                        handleAddItem={handleAddItem} loadBoqItemsAndEdits={loadBoqItemsAndEdits} setBoqItems={setBoqItems}
-                        checkBudgetEarly={checkBudgetEarly} handleSaveProject={handleSaveProject} />
-                    ))}
+                  : <div className="space-y-6">
+                    {boqItems
+                      .filter(item => {
+                        const td = parseTableData(item.table_data);
+                        const name = td.product_name || item.estimator || "";
+                        const desc = td.finalize_description || "";
+                        return fuzzySearch(productSearch, [name, desc]);
+                      })
+                      .map((boqItem: BOMItem, boqIdx: number) => (
+                        <BoqItemCard key={boqItem.id} boqItem={boqItem} boqIdx={boqIdx} isVersionSubmitted={isVersionSubmitted}
+                          expandedProductIds={expandedProductIds} setExpandedProductIds={setExpandedProductIds}
+                          getEditedValue={getEditedValue} updateEditedField={updateEditedField}
+                          handleDeleteRow={handleDeleteRow} handleFinalizeProduct={handleFinalizeProduct}
+                          handleAddItem={handleAddItem} loadBoqItemsAndEdits={loadBoqItemsAndEdits} setBoqItems={setBoqItems}
+                          checkBudgetEarly={checkBudgetEarly} handleSaveProject={handleSaveProject}
+                          isCardDragOver={cardDragOverIdx === boqIdx}
+                          onCardDragStart={(e) => { cardDragIdxRef.current = boqIdx; e.dataTransfer.effectAllowed = 'move'; }}
+                          onCardDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setCardDragOverIdx(boqIdx); }}
+                          onCardDrop={(e) => {
+                            e.preventDefault();
+                            setCardDragOverIdx(null);
+                            const fromIdx = cardDragIdxRef.current;
+                            if (fromIdx === null || fromIdx === boqIdx) return;
+                            const reordered = [...boqItems];
+                            const [moved] = reordered.splice(fromIdx, 1);
+                            reordered.splice(boqIdx, 0, moved);
+                            setBoqItems(reordered);
+                            // Persist the new order
+                            apiFetch('/api/boq-items/reorder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itemIds: reordered.map(i => i.id) }) }).catch(console.error);
+                            cardDragIdxRef.current = null;
+                          }} />
+                      ))}
                   </div>
                 }
               </CardContent>
