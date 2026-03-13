@@ -543,7 +543,7 @@ export default function FinalizeBoq() {
         if (!cols.find(cc => cc.name === c.name)) cols.push(c);
       });
     });
-    return cols.filter(c => !c.hideColumn);
+    return cols;
   }, [boqItems, customColumns]);
 
   const hiddenCols = React.useMemo(() => {
@@ -653,11 +653,12 @@ export default function FinalizeBoq() {
     const nextColsMap: any = {};
     boqItems.forEach(item => {
       const itemCols = customColumns[item.id] || [];
-      // align this item's columns to the new global sequence
-      const sorted = newOrder
+      // Keep hidden columns but align visible ones to the new order
+      const hidden = itemCols.filter(c => c.hideColumn);
+      const sortedVisible = newOrder
         .map(oc => itemCols.find(ic => ic.name === oc.name))
         .filter(Boolean);
-      nextColsMap[item.id] = sorted;
+      nextColsMap[item.id] = [...sortedVisible, ...hidden];
     });
 
     setCustomColumns(prev => ({ ...prev, ...nextColsMap }));
@@ -806,7 +807,7 @@ export default function FinalizeBoq() {
           } else {
             const approved = bomList.find((v: BOQVersion) => v.status === "approved");
             const selectable = bomList.filter((v: BOQVersion) => v.status === "approved");
-            
+
             if (approved && selectable.some((v: BOQVersion) => v.id === approved.id)) {
               setSelectedBomVersionId(approved.id);
             } else if (selectable.length > 0) {
@@ -1601,9 +1602,9 @@ export default function FinalizeBoq() {
       "Description / Location",
       "HSN",
       "SAC",
+      "Qty",
       "Rate / Unit",
       "Unit",
-      "Qty",
       "Total Value (₹)",
       "Override Rate",
       "Override Total",
@@ -1662,9 +1663,9 @@ export default function FinalizeBoq() {
           "Description / Location",
           "HSN",
           "SAC",
-          "Unit",
           "Qty",
           "Rate / Unit",
+          "Unit",
           "Total Value (₹)",
           "Override Rate",
           "Override Total",
@@ -1774,11 +1775,12 @@ export default function FinalizeBoq() {
 
       // ── Apply per-column cell fill colours ──────────────────────────────────
       // Rules (by column name in selectedExportCols):
+      //   • "Rate / Unit", "Unit", "Total Value (₹)"  → light blue  (#D6EAF8)
       //   • "Override Rate" / "Override Total"         → light blue  (#D6EAF8)
       //   • Custom cols (GST, Finance, etc.) BEFORE any "Supply Rate" col → light orange (#FFF3E0)
       //   • Custom cols AT or AFTER a "Supply Rate" col → no fill (white)
-      //   • All other predefined cols (S.No, Product, Rate, Qty, etc.) → no fill
-      const OVERRIDE_COL_SET = new Set(["Override Rate", "Override Total"]);
+      //   • All other predefined cols (S.No, Product, etc.) → no fill
+      const LIGHT_BLUE_COLS_SET = new Set(["Rate / Unit", "Unit", "Total Value (₹)", "Override Rate", "Override Total"]);
 
       // Index of the first column whose name (case-insensitive) is/contains "Supply Rate"
       const supplyRateColIdx = selectedExportCols.findIndex(
@@ -1786,7 +1788,7 @@ export default function FinalizeBoq() {
       );
 
       const getColFillRgb = (colName: string, colPos: number): string | null => {
-        if (OVERRIDE_COL_SET.has(colName)) return "D6EAF8"; // light blue — Override cols
+        if (LIGHT_BLUE_COLS_SET.has(colName)) return "D6EAF8"; // light blue
         const isCustomCol = allCols.some(c => c.name === colName);
         if (!isCustomCol) return null; // predefined col — no colour
         // Custom col: only colour if it comes BEFORE the Supply Rate col (or if no Supply Rate exists)
@@ -2335,7 +2337,7 @@ export default function FinalizeBoq() {
                               <div
                                 key={t.id}
                                 className="flex items-center justify-between p-2 rounded hover:bg-slate-100 cursor-pointer group"
-                                onClick={() => handleSelectFinalizedItemWrapper(t)}
+                                onClick={() => handleApplyTemplate(t.id)}
                               >
                                 <span className="text-xs truncate">{t.name}</span>
                                 <Trash2
@@ -2439,9 +2441,11 @@ export default function FinalizeBoq() {
                 { label: "B: #", name: "S.No" },
                 { label: "C: Product / Material", name: "Product / Material" },
                 { label: "D: Description / Location", name: "Description / Location" },
-                { label: "G: Rate / Unit", name: "Rate / Unit" },
-                { label: "H: Unit", name: "Unit" },
-                { label: "I: Qty", name: "Qty" },
+                { label: "E: HSN", name: "HSN" },
+                { label: "F: SAC", name: "SAC" },
+                { label: "G: Qty", name: "Qty" },
+                { label: "H: Rate / Unit", name: "Rate / Unit" },
+                { label: "I: Unit", name: "Unit" },
                 { label: "J: Total Value (₹)", name: "Total Value (₹)" },
                 { label: "K: Override Rate (₹)", name: "Override Rate" },
                 { label: "L: Override Total (₹)", name: "Override Total" },
@@ -2461,7 +2465,7 @@ export default function FinalizeBoq() {
                           // maintain table order
                           const order = [
                             "S.No", "Product / Material", "Description / Location",
-                            "Unit", "Qty", "Rate / Unit", "Total Value (₹)",
+                            "HSN", "SAC", "Qty", "Rate / Unit", "Unit", "Total Value (₹)",
                             "Override Rate", "Override Total",
                             ...allCols.map(c => c.name)
                           ];
@@ -2755,7 +2759,7 @@ export default function FinalizeBoq() {
                         {!hiddenPredefinedCols.system_total && <th className="border-r border-gray-200 py-1.5 text-center text-gray-700 w-32">J</th>}
                         {!hiddenPredefinedCols.override_rate && <th className="border-r border-gray-200 py-1.5 text-center text-gray-700 w-32">K</th>}
                         {!hiddenPredefinedCols.override_total && <th className="border-r border-gray-200 py-1.5 text-center text-gray-700 w-32">L</th>}
-                        {allCols.map((_, idx) => (
+                        {allCols.filter(c => !c.hideColumn).map((_, idx) => (
                           <th key={idx} className="border-r border-gray-200 py-1.5 text-center text-slate-900 text-[11px] font-semibold bg-gray-50">
                             {getExcelColumnName(idx + 12)}
                           </th>
@@ -2767,12 +2771,12 @@ export default function FinalizeBoq() {
                         {(!hiddenPredefinedCols.override_rate || !hiddenPredefinedCols.override_total) && (
                           <th colSpan={2 - (hiddenPredefinedCols.override_rate ? 1 : 0) - (hiddenPredefinedCols.override_total ? 1 : 0)} className="py-2.5 border-r border-gray-200 bg-gray-50 text-gray-700">OVERRIDE</th>
                         )}
-                        <th colSpan={allCols.length} className="py-2.5 bg-gray-50 text-gray-700">Custom Filters & Totals</th>
+                        <th colSpan={allCols.filter(c => !c.hideColumn).length} className="py-2.5 bg-gray-50 text-gray-700">Custom Filters & Totals</th>
                       </tr>
                       <Reorder.Group
                         as="tr"
                         axis="x"
-                        values={allCols}
+                        values={allCols.filter(c => !c.hideColumn)}
                         onReorder={handleColumnReorder}
                         className="bg-gray-200 text-slate-900 border-b border-gray-300 text-[12px] font-semibold uppercase tracking-wider shadow-sm"
                       >
@@ -3109,13 +3113,16 @@ export default function FinalizeBoq() {
                               let accumulator = 0;
                               const rowCalculatedValues: { [colName: string]: number } = {};
 
-                              return allCols.map((col, idx) => {
+                              return allCols.map((col, realIdx) => {
                                 if (col.isTotal) {
                                   itemTotal += accumulator;
                                   accumulator = 0;
                                   rowCalculatedValues[col.name] = itemTotal;
+                                  
+                                  if (col.hideColumn) return null;
+                                  
                                   return (
-                                    <td key={`${col.name}-${idx}`} className="border-r px-2 py-1.5 text-right font-semibold text-green-900 bg-green-100/40 text-[10px]">
+                                    <td key={`${col.name}-${realIdx}`} className="border-r px-2 py-1.5 text-right font-semibold text-green-900 bg-green-100/40 text-[10px]">
                                       ₹{itemTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </td>
                                   );
@@ -3154,8 +3161,10 @@ export default function FinalizeBoq() {
                                   const itemMultiplier = (itemCol as any).percentageValue || 0;
                                   const itemOp = (itemCol as any).operator || "%";
 
+                                  if (col.hideColumn) return null;
+
                                   return (
-                                    <td key={`${col.name}-${idx}`} className="border-r px-2 py-1 bg-transparent relative group/cell align-middle text-[11px] min-w-[180px]">
+                                    <td key={`${col.name}-${realIdx}`} className="border-r px-2 py-1 bg-transparent relative group/cell align-middle text-[11px] min-w-[180px]">
                                       <div className="flex flex-col h-full min-h-[45px] justify-between">
                                         {!col.isTotal && (
                                           <div className="absolute left-1 top-1 z-20 pointer-events-none group-hover/cell:pointer-events-auto focus-within:pointer-events-auto">
@@ -3176,10 +3185,9 @@ export default function FinalizeBoq() {
                                                 <option value="Override Rate">K: O.Rate</option>
                                                 <option value="Override Total">L: O.Total</option>
                                                 {allCols.filter(c => c.name !== col.name).map((c) => {
-                                                  const ci = allCols.findIndex(cc => cc.name === c.name);
                                                   return (
                                                     <option key={c.name} value={c.name}>
-                                                      {getExcelColumnName(ci + 12)}: {c.name.substring(0, 8)}
+                                                      {getExcelColumnName(allCols.filter(vc => !vc.hideColumn).findIndex(vc => vc.name === c.name) + 12)}: {c.name.substring(0, 8)}
                                                     </option>
                                                   );
                                                 })}
@@ -3201,10 +3209,9 @@ export default function FinalizeBoq() {
                                                 <option value="Override Rate">K: O.Rate</option>
                                                 <option value="Override Total">L: O.Total</option>
                                                 {allCols.filter(c => c.name !== col.name).map((c) => {
-                                                  const ci = allCols.findIndex(cc => cc.name === c.name);
                                                   return (
                                                     <option key={c.name} value={c.name}>
-                                                      {getExcelColumnName(ci + 12)}: {c.name.substring(0, 8)}
+                                                      {getExcelColumnName(allCols.filter(vc => !vc.hideColumn).findIndex(vc => vc.name === c.name) + 12)}: {c.name.substring(0, 8)}
                                                     </option>
                                                   );
                                                 })}
@@ -3347,32 +3354,35 @@ export default function FinalizeBoq() {
                               ₹{calculatedColumnTotals.overrideTotalSum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </td>
                           )}
-                          {allCols.map((col, idx) => (
-                            <td
-                              key={`total-${idx}`}
-                              className={`border-r px-2 py-1.5 text-right font-semibold group/total relative text-[11px] text-gray-800 bg-gray-50`}
-                            >
-                              {!col.hideTotal ? (
-                                <>
-                                  ₹{calculatedColumnTotals.totals[idx].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {allCols.map((col, realIdx) => {
+                            if (col.hideColumn) return null;
+                            return (
+                              <td
+                                key={`total-${realIdx}`}
+                                className={`border-r px-2 py-1.5 text-right font-semibold group/total relative text-[11px] text-gray-800 bg-gray-50`}
+                              >
+                                {!col.hideTotal ? (
+                                  <>
+                                    ₹{calculatedColumnTotals.totals[realIdx].toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    <button
+                                      onClick={() => handleToggleColumnTotalVisibility(col.name, true)}
+                                      className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/total:opacity-100 transition-opacity text-red-400 hover:text-red-600"
+                                      title="Hide Column Total"
+                                    >
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </>
+                                ) : (
                                   <button
-                                    onClick={() => handleToggleColumnTotalVisibility(col.name, true)}
-                                    className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/total:opacity-100 transition-opacity text-red-400 hover:text-red-600"
-                                    title="Hide Column Total"
+                                    onClick={() => handleToggleColumnTotalVisibility(col.name, false)}
+                                    className="text-gray-700 hover:text-gray-900 text-[10px] font-bold uppercase transition-colors"
                                   >
-                                    <Trash2 size={12} />
+                                    + Restore
                                   </button>
-                                </>
-                              ) : (
-                                <button
-                                  onClick={() => handleToggleColumnTotalVisibility(col.name, false)}
-                                  className="text-gray-700 hover:text-gray-900 text-[10px] font-bold uppercase transition-colors"
-                                >
-                                  + Restore
-                                </button>
-                              )}
-                            </td>
-                          ))}
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
                       </tfoot>
                     )}

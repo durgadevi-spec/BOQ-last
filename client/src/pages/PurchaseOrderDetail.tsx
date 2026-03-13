@@ -75,6 +75,11 @@ interface PurchaseOrderItem {
     amount: string;
     hsn_code?: string;
     sac_code?: string;
+    // UI-only refinement fields
+    delivery_date?: string;
+    budget_qty?: number;
+    received_qty?: number;
+    tax_rate?: number; // Added for per-item tax selection
 }
 
 export default function PurchaseOrderDetail() {
@@ -96,7 +101,14 @@ export default function PurchaseOrderDetail() {
     const [showReviseDialog, setShowReviseDialog] = useState(false);
     const [reviseReason, setReviseReason] = useState("");
 
+    // Zoho Books Enhancements UI State
+    const [taxPreference, setTaxPreference] = useState<"exclusive" | "inclusive">("exclusive");
+    const [shippingAddress, setShippingAddress] = useState("");
+    const [paymentTerms, setPaymentTerms] = useState("");
+    const [editableDeliveryDate, setEditableDeliveryDate] = useState("");
+
     const [relatedPos, setRelatedPos] = useState<any[]>([]);
+    const [parentItems, setParentItems] = useState<PurchaseOrderItem[]>([]);
 
     const searchParams = new URLSearchParams(window.location.search);
     const mode = searchParams.get("mode");
@@ -114,6 +126,10 @@ export default function PurchaseOrderDetail() {
                 setPo(data.purchaseOrder);
                 setItems(data.items || []);
                 setRelatedPos(data.relatedPos || []);
+                setParentItems(data.parentItems || []);
+                if (data.purchaseOrder.delivery_date) {
+                    setEditableDeliveryDate(new Date(data.purchaseOrder.delivery_date).toISOString().split("T")[0]);
+                }
             }
         } catch (error) {
             toast({
@@ -181,6 +197,20 @@ export default function PurchaseOrderDetail() {
                 const rateVal = parseFloat(i.rate) || 0;
                 return { ...i, qty: newQty, amount: (qtyVal * rateVal).toString() };
             }
+            return i;
+        }));
+    };
+
+    const handleItemDateChange = (itemId: string, newDate: string) => {
+        setEditedItems(prev => prev.map(i => {
+            if (i.id === itemId) return { ...i, delivery_date: newDate };
+            return i;
+        }));
+    };
+
+    const handleTaxRateChange = (itemId: string, newRate: string) => {
+        setEditedItems(prev => prev.map(i => {
+            if (i.id === itemId) return { ...i, tax_rate: parseFloat(newRate) };
             return i;
         }));
     };
@@ -281,11 +311,31 @@ export default function PurchaseOrderDetail() {
     // Calculations
     // Calculations base on current mode
     const displayItems = isReviseMode ? editedItems : items;
-    const subtotal = displayItems.reduce((sum, item) => sum + parseFloat(item.amount || "0"), 0);
-    const sgst = subtotal * 0.09;
-    const cgst = subtotal * 0.09;
-    const totalWithTax = subtotal + sgst + cgst;
+    
+    // Improved Per-Item Tax Engine
+    let totalTax = 0;
+    let baseSubtotal = 0;
+    
+    displayItems.forEach(item => {
+        const itemAmount = parseFloat(item.amount || "0");
+        const rate = item.tax_rate ?? 18; // Default to 18 if not specified
+        
+        if (taxPreference === "exclusive") {
+            baseSubtotal += itemAmount;
+            totalTax += itemAmount * (rate / 100);
+        } else {
+            // Inclusive
+            const base = itemAmount / (1 + (rate / 100));
+            baseSubtotal += base;
+            totalTax += itemAmount - base;
+        }
+    });
+
+    const sgst = totalTax / 2;
+    const cgst = totalTax / 2;
+    const totalWithTax = baseSubtotal + totalTax;
     const grandTotal = Math.round(totalWithTax);
+    const displayedSubtotal = baseSubtotal;
 
     return (
         <Layout>
@@ -380,6 +430,36 @@ export default function PurchaseOrderDetail() {
                     </div>
                 </div>
 
+                {/* Revision Notice */}
+                {po.status === "revised" && (
+                    <div className="bg-blue-50 border border-blue-200 p-4 rounded-lg flex items-center justify-between no-print">
+                        <div className="flex items-center gap-3 text-blue-800">
+                            <div className="bg-blue-100 p-2 rounded-full">
+                                <Edit className="h-5 w-5" />
+                            </div>
+                            <div>
+                                <p className="font-semibold text-sm">This Purchase Order has been revised.</p>
+                                <p className="text-xs">A newer version of this document exists. Please refer to the related versions below for the latest details.</p>
+                            </div>
+                        </div>
+                        <Button size="sm" variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-100" onClick={() => {
+                            if (relatedPos.length > 0) {
+                                // Find the latest one (sorted by created_at DESC in backend)
+                                setLocation(`/purchase-orders/${relatedPos[0].id}`);
+                            } else {
+                                toast({
+                                    title: "No other versions found",
+                                    description: "We couldn't find a newer version of this PO. It may have been deleted or the numbering has changed.",
+                                });
+                                const related = document.getElementById('related-versions');
+                                related?.scrollIntoView({ behavior: 'smooth' });
+                            }
+                        }}>
+                            View Latest Version
+                        </Button>
+                    </div>
+                )}
+
                 {/* Main PO Document Card */}
                 <Card className="max-w-[1000px] mx-auto border-slate-300 shadow-xl overflow-hidden bg-white po-container relative">
                     {po.status === 'approved' && <div className="watermark print-only hidden">Approved</div>}
@@ -392,8 +472,8 @@ export default function PurchaseOrderDetail() {
                                 <img src="/logo.png" alt="Concept Trunk Interiors" className="h-20 w-auto" />
                             </div>
                             <div className="text-right">
-                                <div className="text-3xl font-bold text-slate-800 tracking-wide">BILL</div>
-                                <div className="text-sm text-slate-500 mt-1">Bill# <span className="font-semibold text-slate-700">{po.po_number}</span></div>
+                                <div className="text-2xl font-bold text-slate-800 tracking-tight">PURCHASE ORDER</div>
+                                <div className="text-sm text-slate-500 mt-1">PO# <span className="font-semibold text-slate-700">{po.po_number}</span></div>
                             </div>
                         </div>
 
@@ -409,9 +489,9 @@ export default function PurchaseOrderDetail() {
                             </div>
                         </div>
 
-                        {/* Bill From (Vendor) + Bill Date section */}
-                        <div className="grid grid-cols-2 gap-8 py-4">
-                            <div>
+                        {/* Bill From / Deliver To / Dates Grid */}
+                        <div className="flex justify-between gap-8 py-4">
+                            <div className="flex-1">
                                 <p className="text-sm text-slate-500 mb-1">Bill From</p>
                                 <p className="font-semibold text-slate-800">{po.vendor_name || "Vendor"}</p>
                                 {po.vendor_location && <p className="text-sm text-slate-600">{po.vendor_location}</p>}
@@ -426,16 +506,49 @@ export default function PurchaseOrderDetail() {
                                     <p className="text-xs text-slate-500 mt-1">GSTIN {po.vendor_gstin}</p>
                                 )}
                             </div>
-                            <div className="text-right space-y-2">
+                            
+                            <div className="flex-1">
+                                <p className="text-sm text-slate-500 mb-1">Deliver To</p>
+                                {isReviseMode ? (
+                                    <Textarea 
+                                        placeholder="Enter Shipping Address..."
+                                        className="text-sm text-slate-600 min-h-[100px] w-full"
+                                        value={shippingAddress}
+                                        onChange={(e) => setShippingAddress(e.target.value)}
+                                    />
+                                ) : (
+                                    shippingAddress ? (
+                                        <div className="text-sm text-slate-600 whitespace-pre-wrap">{shippingAddress}</div>
+                                    ) : (
+                                        <div className="text-sm text-slate-400 italic">No alternative shipping address provided. Assuming standard company address.</div>
+                                    )
+                                )}
+                            </div>
+
+                            <div className="flex-1 text-right space-y-2">
                                 <div className="flex justify-end gap-8">
-                                    <span className="text-sm text-slate-500">Bill Date :</span>
+                                    <span className="text-sm text-slate-500">PO Date :</span>
                                     <span className="text-sm font-medium text-slate-700">{new Date(po.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
                                 </div>
-                                {po.delivery_date && (
-                                    <div className="flex justify-end gap-8">
-                                        <span className="text-sm text-slate-500">Due Date :</span>
-                                        <span className="text-sm font-medium text-slate-700">{new Date(po.delivery_date).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                                {isReviseMode ? (
+                                    <div className="flex justify-end gap-2 items-center">
+                                        <span className="text-sm text-slate-500">Exp. Delivery :</span>
+                                        <Input 
+                                            type="date" 
+                                            className="w-36 h-8 text-sm"
+                                            value={editableDeliveryDate}
+                                            onChange={(e) => setEditableDeliveryDate(e.target.value)}
+                                        />
                                     </div>
+                                ) : (
+                                    (po.delivery_date || editableDeliveryDate) && (
+                                        <div className="flex justify-end gap-8">
+                                            <span className="text-sm text-slate-500">Expected Delivery :</span>
+                                            <span className="text-sm font-medium text-slate-700">
+                                                {new Date(editableDeliveryDate || po.delivery_date || "").toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                            </span>
+                                        </div>
+                                    )
                                 )}
                                 <div className="flex justify-end gap-8">
                                     <span className="text-sm text-slate-500">Customer Name :</span>
@@ -465,66 +578,220 @@ export default function PurchaseOrderDetail() {
                             </div>
                         )}
 
-                        {/* Items Table */}
+                        {/* Items Table Control Bar */}
+                        {isReviseMode && (
+                            <div className="flex justify-end mb-2 no-print">
+                                <div className="flex items-center gap-2 bg-slate-50 p-2 rounded border border-slate-200">
+                                    <span className="text-sm font-medium text-slate-600">Tax Preference (Global):</span>
+                                    <select 
+                                        className="text-sm border border-slate-300 rounded p-1 bg-white outline-none focus:ring-1 focus:ring-primary"
+                                        value={taxPreference}
+                                        onChange={(e) => setTaxPreference(e.target.value as any)}
+                                    >
+                                        <option value="exclusive">Tax Exclusive</option>
+                                        <option value="inclusive">Tax Inclusive</option>
+                                    </select>
+                                </div>
+                            </div>
+                        )}
                         <div className="border border-slate-300 overflow-hidden">
                             <Table>
                                 <TableHeader>
                                     <TableRow className="bg-slate-100 border-b border-slate-300">
-                                        <TableHead className="text-slate-700 font-semibold w-12 text-center text-xs py-2">#</TableHead>
-                                        <TableHead className="text-slate-700 font-semibold text-xs py-2">Item & Description</TableHead>
-                                        <TableHead className="text-slate-700 font-semibold text-xs text-center py-2">HSN/SAC</TableHead>
-                                        <TableHead className="text-slate-700 font-semibold text-xs text-center py-2">Qty</TableHead>
-                                        <TableHead className="text-slate-700 font-semibold text-xs text-right py-2">Rate</TableHead>
-                                        <TableHead className="text-slate-700 font-semibold text-xs text-right py-2 pr-4">Amount</TableHead>
-                                        {isReviseMode && <TableHead className="text-slate-700 font-semibold text-xs text-center w-12 py-2">Action</TableHead>}
+                                        <TableHead className="text-slate-700 font-semibold w-12 text-center text-[10px] py-1">#</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] py-1">Item Details</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-center py-1">HSN/SAC</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-center py-1">Ordered Qty</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-center py-1">Change</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-center py-1">Balance Qty</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-center py-1">Tax %</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-right py-1">Rate</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-right py-1 pr-4">Amount</TableHead>
+                                        <TableHead className="text-slate-700 font-semibold text-[10px] text-center py-1">Exp. Delivery</TableHead>
+                                        {isReviseMode && <TableHead className="text-slate-700 font-semibold text-[10px] text-center w-8 py-1">Action</TableHead>}
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {displayItems.map((item, idx) => (
-                                        <TableRow key={item.id} className="border-b border-slate-200">
-                                            <TableCell className="text-center text-sm text-slate-500">{idx + 1}</TableCell>
-                                            <TableCell>
-                                                <div className="text-sm text-slate-800">{item.item || item.item_name}</div>
-                                                {item.description && <div className="text-xs text-slate-400 mt-0.5">{item.description}</div>}
-                                                {item.unit && <div className="text-xs text-slate-400">{item.unit}</div>}
-                                            </TableCell>
-                                            <TableCell className="text-center text-sm text-slate-600">{item.hsn_code || item.sac_code || ""}</TableCell>
-                                            <TableCell className="text-center text-sm">
-                                                {isReviseMode ? (
-                                                    <Input
-                                                        type="number"
-                                                        value={item.qty}
-                                                        onChange={(e) => handleQtyChange(item.id, e.target.value)}
-                                                        className="w-20 text-center mx-auto h-8 text-sm"
-                                                        min="0"
-                                                        step="0.01"
-                                                    />
-                                                ) : (
-                                                    parseFloat(item.qty).toFixed(2)
-                                                )}
-                                            </TableCell>
-                                            <TableCell className="text-right text-sm">{parseFloat(item.rate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</TableCell>
-                                            <TableCell className="text-right text-sm font-medium pr-4">{parseFloat(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</TableCell>
-                                            {isReviseMode && (
-                                                <TableCell className="text-center">
-                                                    <Button variant="ghost" size="sm" onClick={() => handleDeleteItem(item.id)} className="h-8 w-8 p-0">
-                                                        <Trash2 className="h-4 w-4 text-red-500" />
-                                                    </Button>
+                                    {displayItems.map((item, idx) => {
+                                        // When revising, compare against current items. When viewing, compare against parent PO items.
+                                        const baseItems = isReviseMode ? items : parentItems;
+                                        
+                                        // Match by name and description since IDs change across PO versions
+                                        const originalItem = baseItems.find(o => 
+                                            (o.item === item.item || o.item_name === item.item_name || o.item === item.item_name || o.item_name === item.item) && 
+                                            o.description === item.description
+                                        );
+                                        
+                                        const originalQty = originalItem ? parseFloat(originalItem.qty) : 0;
+                                        const currentQty = parseFloat(item.qty) || 0;
+                                        const change = currentQty - originalQty;
+                                        
+                                        // Mock value for Received as requested (no DB support)
+                                        const receivedQty = item.received_qty ?? 0;
+                                        const balanceQty = currentQty - receivedQty;
+
+                                        return (
+                                            <TableRow key={item.id} className="border-b border-slate-200">
+                                                <TableCell className="text-center text-[11px] text-slate-500 py-2">{idx + 1}</TableCell>
+                                                <TableCell className="py-2">
+                                                    <div className="flex items-center gap-1.5">
+                                                        {change !== 0 && <div className={`w-1.5 h-1.5 rounded-full ${change > 0 ? 'bg-green-500' : 'bg-red-500'}`} />}
+                                                        <div className="text-[11px] font-medium text-slate-800 uppercase">{item.item || item.item_name}</div>
+                                                    </div>
+                                                    {item.description && <div className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">{item.description}</div>}
+                                                    {item.unit && <div className="text-[9px] text-slate-400">Unit: {item.unit}</div>}
                                                 </TableCell>
-                                            )}
-                                        </TableRow>
-                                    ))}
+                                                <TableCell className="text-center text-[11px] text-slate-600 py-2">{item.hsn_code || item.sac_code || "—"}</TableCell>
+
+                                                {/* Ordered Qty Column */}
+                                                <TableCell className="text-center text-[11px] py-1">
+                                                    {isReviseMode ? (
+                                                        <Input
+                                                            type="number"
+                                                            value={item.qty}
+                                                            onChange={(e) => handleQtyChange(item.id, e.target.value)}
+                                                            className="w-14 text-center mx-auto h-6 text-[10px] p-0.5"
+                                                            min="0"
+                                                            step="0.01"
+                                                        />
+                                                    ) : (
+                                                        currentQty.toFixed(2)
+                                                    )}
+                                                </TableCell>
+
+                                                {/* Change Column */}
+                                                <TableCell className="text-center text-[11px] py-1">
+                                                    <span className={`font-bold ${change > 0 ? 'text-green-600' : change < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                                                        {change > 0 ? `+${change.toFixed(2)}` : change === 0 ? "0" : change.toFixed(2)}
+                                                    </span>
+                                                </TableCell>
+
+                                                {/* Balance Qty Column */}
+                                                <TableCell className="text-center text-[11px] py-1">
+                                                    <span className={`px-1 py-0.5 rounded-sm font-semibold ${balanceQty === 0 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                                                        {balanceQty.toFixed(2)}
+                                                        {balanceQty === 0 && <span className="ml-1 text-[7px] uppercase">(Full)</span>}
+                                                    </span>
+                                                </TableCell>
+
+                                                {/* Tax Selection Dropdown */}
+                                                <TableCell className="text-center text-[11px] py-1">
+                                                    {isReviseMode ? (
+                                                        <select 
+                                                            className="h-6 text-[9px] border rounded w-16 bg-white p-0.5 outline-none focus:ring-1 focus:ring-primary"
+                                                            value={item.tax_rate ?? 18}
+                                                            onChange={(e) => handleTaxRateChange(item.id, e.target.value)}
+                                                        >
+                                                            <option value="0">0%</option>
+                                                            <option value="5">5%</option>
+                                                            <option value="12">12%</option>
+                                                            <option value="18">18%</option>
+                                                            <option value="28">28%</option>
+                                                        </select>
+                                                    ) : (
+                                                        <Badge variant="outline" className="text-[9px] py-0 px-1 border-slate-200 text-slate-500">
+                                                            {item.tax_rate ?? 18}%
+                                                        </Badge>
+                                                    )}
+                                                </TableCell>
+
+                                                <TableCell className="text-right text-[11px] py-1">
+                                                    {parseFloat(item.rate).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                                </TableCell>
+                                                
+                                                <TableCell className="text-right text-[11px] font-semibold py-1 pr-4 text-slate-700">
+                                                    {parseFloat(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                                </TableCell>
+
+                                                {/* Delivery Date per Item */}
+                                                <TableCell className="text-center text-[11px] py-1">
+                                                    {isReviseMode ? (
+                                                        <Input 
+                                                            type="date" 
+                                                            className="w-24 h-6 text-[9px] p-0.5 mx-auto"
+                                                            value={item.delivery_date || ""}
+                                                            onChange={(e) => handleItemDateChange(item.id, e.target.value)}
+                                                        />
+                                                    ) : (
+                                                        <span className="text-slate-600">{item.delivery_date ? new Date(item.delivery_date).toLocaleDateString() : "—"}</span>
+                                                    )}
+                                                </TableCell>
+
+                                                {isReviseMode && (
+                                                    <TableCell className="text-center py-1">
+                                                        <Button variant="ghost" size="sm" onClick={() => handleDeleteItem(item.id)} className="h-5 w-5 p-0 hover:bg-red-50">
+                                                            <Trash2 className="h-3 w-3 text-red-500" />
+                                                        </Button>
+                                                    </TableCell>
+                                                )}
+                                            </TableRow>
+                                        );
+                                    })}
                                 </TableBody>
                             </Table>
                         </div>
 
-                        {/* Totals Section */}
-                        <div className="flex justify-end">
-                            <div className="w-72 space-y-1">
+                        {/* Totals Section & Terms */}
+                        <div className="flex justify-between items-start mt-6">
+                            {/* Terms & Conditions */}
+                            <div className="flex-1 pr-8 pt-2">
+                                <div className="space-y-4">
+                                    <div>
+                                        <p className="text-xs text-slate-500 mb-1.5 font-semibold uppercase tracking-wider">Payment Terms</p>
+                                        {isReviseMode ? (
+                                            <select 
+                                                className="w-full max-w-xs text-sm border border-slate-300 rounded p-2 bg-white outline-none focus:ring-1 focus:ring-primary h-10"
+                                                value={paymentTerms}
+                                                onChange={(e) => setPaymentTerms(e.target.value)}
+                                            >
+                                                <option value="">Select Terms</option>
+                                                <option value="Advance">Advance</option>
+                                                <option value="50% Advance">50% Advance</option>
+                                                <option value="Net 15">Net 15</option>
+                                                <option value="Net 30">Net 30</option>
+                                                <option value="Net 45">Net 45</option>
+                                                <option value="On Delivery">On Delivery</option>
+                                                <option value="custom">Other (Enter in Terms)</option>
+                                            </select>
+                                        ) : (
+                                            paymentTerms ? (
+                                                <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 px-3 py-1 font-bold">
+                                                    {paymentTerms}
+                                                </Badge>
+                                            ) : <span className="text-slate-400 text-xs italic">No payment terms specified.</span>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <p className="text-xs text-slate-500 mb-1.5 font-semibold uppercase tracking-wider">Additional Terms & Conditions</p>
+                                        {isReviseMode ? (
+                                            <Textarea 
+                                                placeholder="Enter custom terms, banking details, or other conditions..."
+                                                className="text-sm text-slate-600 min-h-[120px] w-full border-slate-300 focus:border-primary"
+                                                value={comment} /* Use comment state as it was mapped to terms in simpler version */
+                                                onChange={(e) => setComment(e.target.value)}
+                                            />
+                                        ) : (
+                                            po.comments || po.approval_comments ? (
+                                                <div className="text-[11px] text-slate-600 whitespace-pre-wrap bg-slate-50/70 p-4 rounded-md border border-slate-100 italic leading-relaxed">
+                                                    {po.comments || po.approval_comments}
+                                                </div>
+                                            ) : null
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Totals Engine */}
+                            <div className="w-72 space-y-1 bg-white pt-2 shrink-0">
                                 <div className="flex justify-between text-sm py-1">
                                     <span className="text-slate-600 font-medium">Sub Total</span>
-                                    <span className="text-slate-800">{subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                                    <span className="text-slate-800">{displayedSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                                 </div>
+                                {taxPreference === "inclusive" && (
+                                    <div className="flex justify-between text-[11px] font-medium text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded -mx-2 mb-1">
+                                        <span>Subtotal derived from inclusive rate</span>
+                                    </div>
+                                )}
                                 <div className="flex justify-between text-sm py-1">
                                     <span className="text-slate-600">SGST9 (9%)</span>
                                     <span className="text-slate-800">{sgst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
@@ -560,21 +827,26 @@ export default function PurchaseOrderDetail() {
 
                 {/* Related PO Versions */}
                 {relatedPos.length > 0 && (
-                    <Card className="max-w-[1000px] mx-auto border-slate-300 shadow bg-white no-print mt-6">
+                    <Card id="related-versions" className="max-w-[1000px] mx-auto border-blue-200 shadow-lg bg-blue-50/30 no-print mt-6 scroll-mt-20">
                         <CardContent className="p-6">
-                            <h3 className="text-lg font-bold text-slate-800 mb-4">Related PO Versions</h3>
-                            <div className="space-y-3">
+                            <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+                                <Loader2 className="h-5 w-5 text-blue-500" />
+                                Related PO Versions
+                            </h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                 {relatedPos.map(rpo => (
-                                    <div key={rpo.id} className="flex items-center justify-between p-3 border rounded hover:bg-slate-50 cursor-pointer" onClick={() => setLocation(`/purchase-orders/${rpo.id}`)}>
+                                    <div 
+                                        key={rpo.id} 
+                                        className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-lg hover:border-blue-400 hover:shadow-md transition-all cursor-pointer group" 
+                                        onClick={() => setLocation(`/purchase-orders/${rpo.id}`)}
+                                    >
                                         <div>
-                                            <div className="font-semibold text-slate-800">{rpo.po_number}</div>
-                                            <div className="text-xs text-slate-500">{new Date(rpo.created_at).toLocaleDateString()}</div>
+                                            <div className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{rpo.po_number}</div>
+                                            <div className="text-[10px] text-slate-500 uppercase tracking-wider">{new Date(rpo.created_at).toLocaleDateString()}</div>
                                         </div>
-                                        <div className="flex items-center gap-4">
-                                            <div className="text-right">
-                                                <div className="text-sm font-bold text-slate-700">₹{parseFloat(rpo.total || "0").toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
-                                            </div>
+                                        <div className="flex flex-col items-end gap-1">
                                             {getStatusBadge(rpo.status)}
+                                            <div className="text-[10px] font-bold text-slate-700">₹{parseFloat(rpo.total).toLocaleString()}</div>
                                         </div>
                                     </div>
                                 ))}

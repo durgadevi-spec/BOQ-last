@@ -6826,13 +6826,40 @@ export async function registerRoutes(
       }
 
       const newStatus = hasIncrease ? "pending_approval" : existingPo.status;
-      const approvalComments = hasIncrease ? reason : existingPo.approval_comments;
+      
+      // Auto-generate Change Summary
+      let changeSummary = "Change Log:\n";
+      for (const item of items) {
+        const original = existingItems.find((i: any) => 
+            (i.item || i.item_name) === (item.item || item.item_name) && i.description === item.description
+        );
+        if (original) {
+          const oldQty = parseFloat(original.qty);
+          const newQty = parseFloat(item.qty);
+          if (oldQty !== newQty) {
+            changeSummary += `- ${item.item || item.item_name}: Qty changed from ${oldQty} to ${newQty}\n`;
+          }
+        } else {
+          changeSummary += `- Added new item: ${item.item || item.item_name} (Qty: ${item.qty})\n`;
+        }
+      }
+      
+      if (deletedItems && deletedItems.length > 0) {
+        for (const ditem of deletedItems) {
+           changeSummary += `- Removed item: ${ditem.item || ditem.item_name} (Qty: ${ditem.qty}) -> Moved to Deferred PO\n`;
+        }
+      }
+
+      const finalComments = `${reason ? reason + "\n\n" : ""}${changeSummary}`;
+      const approvalComments = hasIncrease ? finalComments : (reason ? finalComments : existingPo.approval_comments);
 
       // Calculate new total
       let totalAmount = 0;
       for (const item of items) {
         totalAmount += parseFloat(item.amount) || (parseFloat(item.qty) * parseFloat(item.rate)) || 0;
       }
+
+      console.log(`[revise-po] Attempting revision for PO ${id}. New PO Number: ${newPoNumber}`);
 
       // 4. Create new PO
       const newPoRes = await query(
@@ -6841,6 +6868,7 @@ export async function registerRoutes(
         [newPoNumber, existingPo.project_id, existingPo.project_name, existingPo.vendor_id, existingPo.vendor_name, totalAmount, totalAmount, newStatus, existingPo.requested_by, approvalComments]
       );
       const newPo = newPoRes.rows[0];
+      console.log(`[revise-po] New PO created with ID: ${newPo.id}`);
 
       // 5. Insert new items
       for (const item of items) {
@@ -6945,21 +6973,50 @@ export async function registerRoutes(
       );
 
       // Fetch Related PO Versions
-      let basePoNumber = poResult.rows[0].po_number.split('-R')[0];
-      basePoNumber = basePoNumber.split('-Deferred')[0];
+      const currentPo = poResult.rows[0];
+      let fullPoNumber = currentPo.po_number;
+      let basePoNumber = fullPoNumber.split('-R')[0].split('-Deferred')[0].split('-R')[0].trim();
       
       const relatedPosResult = await query(
         `SELECT id, po_number, status, total, approval_comments, created_at 
          FROM purchase_orders 
-         WHERE po_number LIKE $1 AND id != $2 
+         WHERE (TRIM(po_number) ILIKE $1 OR TRIM(po_number) ILIKE $4) 
+           AND id::text != $2::text
+           AND project_id = $3
          ORDER BY created_at DESC`,
-        [`${basePoNumber}%`, id]
+        [`${basePoNumber}%`, id, currentPo.project_id, `%${basePoNumber}%`]
       );
 
+      console.log(`[debug-related-po] Base: ${basePoNumber}, Current: ${fullPoNumber}, Project: ${currentPo.project_id}, Found: ${relatedPosResult.rows.length}`);
+
+      // Fetch Parent PO Items for Change Tracking
+      let parentItems: any[] = [];
+      const revMatch = fullPoNumber.match(/-R(\d+)$/);
+      if (revMatch) {
+        const revNum = parseInt(revMatch[1], 10);
+        let parentNumber = revNum === 1 
+          ? fullPoNumber.replace(/-R\d+$/, "") 
+          : fullPoNumber.replace(/-R\d+$/, `-R${revNum - 1}`);
+
+        const parentRes = await query(
+          `SELECT id FROM purchase_orders WHERE po_number = $1 AND project_id = $2 LIMIT 1`,
+          [parentNumber, currentPo.project_id]
+        );
+
+        if (parentRes.rows.length > 0) {
+          const pItemsResult = await query(
+            `SELECT * FROM purchase_order_items WHERE po_id = $1`,
+            [parentRes.rows[0].id]
+          );
+          parentItems = pItemsResult.rows;
+        }
+      }
+
       res.json({
-        purchaseOrder: poResult.rows[0],
+        purchaseOrder: currentPo,
         items: itemsResult.rows,
-        relatedPos: relatedPosResult.rows
+        relatedPos: relatedPosResult.rows,
+        parentItems: parentItems
       });
     } catch (err) {
       console.error("GET /api/purchase-orders/:id error:", err);
@@ -7054,63 +7111,80 @@ export async function registerRoutes(
       const q = (req.body.query || "").toLowerCase().trim();
       let answer = "I'm sorry, I didn't understand that. You can ask me about material prices, availability, or products (e.g., 'price of MDF', 'do we have hinges', 'list restroom products').";
 
-      // 1. Check for price
-      const priceMatch = q.match(/price of (.+)|cost of (.+)|rate of (.+)|how much is (.+)/i);
-      if (priceMatch) {
-         const matName = priceMatch[1] || priceMatch[2] || priceMatch[3] || priceMatch[4];
+      // 1. HELP / GUIDE
+      if (q.match(/help|guide|what can you do|how to use/i)) {
+         answer = `**I'm your Assistant Bot!** I can help you find information quickly.
+
+**Try asking me:**
+- 💰 **Prices**: "Price of MDF 18mm"
+- 📦 **Stock**: "Do we have hinges?"
+- 📂 **Categories**: "List all categories"
+- 🏗️ **Projects**: "How many projects?"
+- 🏢 **Vendors**: "Info for Mohan Electricals"`;
+      }
+      // 2. PROJECT COUNT / LIST
+      else if (q.match(/how many projects|list projects|active projects|show projects/i)) {
+         const r = await query(`SELECT COUNT(*) as count FROM boq_projects`);
+         const list = await query(`SELECT name FROM boq_projects ORDER BY created_at DESC LIMIT 5`);
+         answer = `We have **${r.rows[0].count} total projects**.
+
+**Recent Projects:**
+${list.rows.map((row: any) => `- ${row.name}`).join('\n')}`;
+      }
+      // 3. CATEGORY LISTING
+      else if (q.match(/list categories|show categories|what categories|all categories/i)) {
+         const r = await query(`SELECT name FROM material_categories ORDER BY name ASC`);
+         answer = `**Material Categories:**\n${r.rows.map((row: any) => `- ${row.name}`).join('\n')}`;
+      }
+      // 4. PRICE LOOKUP
+      else if (q.match(/price of (.+)|cost of (.+)|rate of (.+)|how much is (.+)/i)) {
+         const priceMatch = q.match(/price of (.+)|cost of (.+)|rate of (.+)|how much is (.+)/i);
+         const matName = priceMatch![1] || priceMatch![2] || priceMatch![3] || priceMatch![4];
          const r = await query(`SELECT name, rate, unit FROM materials WHERE name ILIKE $1 LIMIT 5`, [`%${matName.trim()}%`]);
          if (r.rows.length === 0) {
-            answer = `I couldn't find any material matching "${matName}".`;
+            answer = `I couldn't find any material matching "**${matName}**".`;
          } else {
-            answer = r.rows.map((row: any) => `The price of ${row.name} is ₹${row.rate} per ${row.unit || 'unit'}.`).join('\n');
+            answer = `**Price Results for "${matName}":**\n\n| Material | Rate | Unit |\n| :--- | :--- | :--- |\n` + 
+                     r.rows.map((row: any) => `| ${row.name} | ₹${row.rate} | ${row.unit || 'unit'} |`).join('\n');
          }
       } 
-      // 2. Check for availability
-      else if (q.match(/do we have (.+)|is (.+) available|is (.+) in stock|do you have (.+)|is there any material like (.+)|is there material like (.+)|is there any (.+)|any (.+) material/i)) {
-         const availMatch = q.match(/do we have (.+)|is (.+) available|is (.+) in stock|do you have (.+)|is there any material like (.+)|is there material like (.+)|is there any (.+)|any (.+) material/i);
-         const matName = availMatch![1] || availMatch![2] || availMatch![3] || availMatch![4] || availMatch![5] || availMatch![6] || availMatch![7] || availMatch![8];
+      // 5. VENDOR INFO
+      else if (q.match(/info for (.+)|vendor (.+)|who is (.+)/i)) {
+         const vendorMatch = q.match(/info for (.+)|vendor (.+)|who is (.+)/i);
+         const vName = vendorMatch![1] || vendorMatch![2] || vendorMatch![3];
+         const r = await query(`SELECT name, location, city, gstno FROM shops WHERE name ILIKE $1 LIMIT 1`, [`%${vName.trim()}%`]);
+         if (r.rows.length === 0) {
+            answer = `I couldn't find a vendor named "**${vName}**".`;
+         } else {
+            const v = r.rows[0];
+            answer = `**Vendor Information:**
+- **Name**: ${v.name}
+- **Location**: ${v.location || 'N/A'}, ${v.city || ''}
+- **GSTIN**: ${v.gstno || 'Not Provided'}`;
+         }
+      }
+      // 6. AVAILABILITY
+      else if (q.match(/do we have (.+)|is (.+) available|is (.+) in stock|any (.+)/i)) {
+         const availMatch = q.match(/do we have (.+)|is (.+) available|is (.+) in stock|any (.+)/i);
+         const matName = availMatch![1] || availMatch![2] || availMatch![3] || availMatch![4];
          const r = await query(`SELECT name FROM materials WHERE name ILIKE $1 LIMIT 5`, [`%${matName.trim()}%`]);
          if (r.rows.length === 0) {
-            answer = `No, we do not have any materials matching "${matName}" in our database.`;
+            answer = `No, we don't have materials matching "**${matName}**" in our database.`;
          } else {
-            answer = `Yes, we have:\n${r.rows.map((row: any) => '- ' + row.name).join('\n')}`;
+            answer = `**Yes, we have these matching items:**\n${r.rows.map((row: any) => '- ' + row.name).join('\n')}`;
          }
       }
-      // 3. List products
-      else if (q.match(/list (.+) products|what (.+) products|show (.+) products/i)) {
-         const catMatch = q.match(/list (.+) products|what (.+) products|show (.+) products/i);
-         const catName = catMatch![1] || catMatch![2] || catMatch![3];
-         const cRes = await query(`SELECT id FROM material_categories WHERE name ILIKE $1 LIMIT 1`, [`%${catName.trim()}%`]);
-         if (cRes.rows.length > 0) {
-            const catId = cRes.rows[0].id;
-            const pRes = await query(`SELECT name FROM products WHERE category_id = $1 LIMIT 10`, [catId]);
-            if (pRes.rows.length === 0) {
-                answer = `We don't have any products under the "${catName}" category.`;
-            } else {
-                answer = `Products in ${catName}:\n${pRes.rows.map((p: any) => '- ' + p.name).join('\n')}`;
-            }
-         } else {
-            // try searching products just by name
-            const pRes = await query(`SELECT name FROM products WHERE name ILIKE $1 LIMIT 10`, [`%${catName.trim()}%`]);
-            if (pRes.rows.length > 0) {
-               answer = `Here are some products matching "${catName}":\n${pRes.rows.map((p: any) => '- ' + p.name).join('\n')}`;
-            } else {
-               answer = `I couldn't find any category or products matching "${catName}".`;
-            }
-         }
-      }
-      // 4. Fallback search (just material/product name)
+      // 7. FALLBACK SEARCH
       else {
-         const matRes = await query(`SELECT name, rate, unit FROM materials WHERE name ILIKE $1 LIMIT 5`, [`%${q}%`]);
+         const matRes = await query(`SELECT name, rate, unit FROM materials WHERE name ILIKE $1 LIMIT 3`, [`%${q}%`]);
          if (matRes.rows.length > 0) {
-             answer = `I found these materials matching "${q}":\n${matRes.rows.map((row: any) => `- ${row.name} (Price: ₹${row.rate}/${row.unit || 'unit'})`).join('\n')}`;
+             answer = `I found these materials matching "**${q}**":\n${matRes.rows.map((row: any) => `- ${row.name} (₹${row.rate}/${row.unit || 'unit'})`).join('\n')}`;
          } else {
-             // Also search products
-             const pRes = await query(`SELECT name FROM products WHERE name ILIKE $1 LIMIT 5`, [`%${q}%`]);
+             const pRes = await query(`SELECT name FROM products WHERE name ILIKE $1 LIMIT 3`, [`%${q}%`]);
              if (pRes.rows.length > 0) {
-                 answer = `I found these products matching "${q}":\n${pRes.rows.map((p: any) => `- ${p.name}`).join('\n')}`;
+                 answer = `I found these products matching "**${q}**":\n${pRes.rows.map((p: any) => `- ${p.name}`).join('\n')}`;
              } else {
-                 answer = "I'm sorry, I couldn't find any materials or products matching your query. You can try asking 'price of MDF', 'do we have hinges', or just type a material name.";
+                 answer = "I'm sorry, I couldn't find anything matching your query. Type **'help'** to see what I can do!";
              }
          }
       }
