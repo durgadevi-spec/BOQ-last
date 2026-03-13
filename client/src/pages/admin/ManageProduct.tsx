@@ -121,6 +121,15 @@ export default function ManageProduct() {
         return new Set((allApprovals as any[]).filter(a => a.status === "approved").map(a => a.product_id));
     }, [allApprovals]);
 
+    const pendingProductIds = useMemo(() => {
+        if (!allApprovals) return new Set();
+        return new Set((allApprovals as any[]).filter(a => a.status === "pending").map(a => a.product_id));
+    }, [allApprovals]);
+
+    const rejectedProductIds = useMemo(() => {
+        if (!allApprovals) return new Set();
+        return new Set((allApprovals as any[]).filter(a => a.status === "rejected").map(a => a.product_id));
+    }, [allApprovals]);
 
     const filteredProducts = useMemo(() => {
         if (!productsData) return [];
@@ -433,17 +442,31 @@ export default function ManageProduct() {
                                                         {needsWorkProducts.length === 0 ? (
                                                             <TableRow><TableCell colSpan={4} className="text-center py-10 text-muted-foreground">No products currently need work.</TableCell></TableRow>
                                                         ) : needsWorkProducts.map(product => {
+                                                            const isPending = pendingProductIds.has(product.id);
+                                                            const isRejected = rejectedProductIds.has(product.id);
                                                             return (
                                                                 <TableRow key={product.id} className={`hover:bg-muted/20 transition-colors cursor-pointer ${selectedProduct?.id === product.id ? "bg-primary/5 hover:bg-primary/10" : ""}`} onClick={() => selectProduct(product)}>
                                                                     <TableCell onClick={e => e.stopPropagation()}>
                                                                         <Checkbox checked={selectedProduct?.id === product.id} onCheckedChange={checked => checked ? selectProduct(product) : setSelectedProduct(null)} />
                                                                     </TableCell>
-                                                                    <TableCell className="font-semibold text-base">
-                                                                        {product.name}
+                                                                    <TableCell className="font-semibold text-base py-4">
+                                                                        <div className="flex flex-col gap-1">
+                                                                            <span>{product.name}</span>
+                                                                            <div className="flex gap-2">
+                                                                                {isPending && <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200 text-[8px] h-4 px-1.5 font-bold uppercase flex items-center gap-1 w-fit"><Loader2 className="h-2 w-2 animate-spin" /> Pending Approval</Badge>}
+                                                                                {isRejected && <Badge variant="outline" className="bg-red-100 text-red-700 border-red-200 text-[8px] h-4 px-1.5 font-bold uppercase flex items-center gap-1 w-fit"><XCircle className="h-2 w-2" /> Rejected</Badge>}
+                                                                            </div>
+                                                                        </div>
                                                                     </TableCell>
                                                                     <TableCell className="text-muted-foreground">{product.created_at ? new Date(product.created_at).toLocaleDateString() : "N/A"}</TableCell>
                                                                     <TableCell className="text-center">
-                                                                        <span className="text-[10px] font-medium text-muted-foreground border border-dashed border-muted/50 px-2 py-0.5 rounded-sm whitespace-nowrap">Needs Work</span>
+                                                                        {isPending ? (
+                                                                            <Badge variant="outline" className="bg-amber-50 text-amber-600 border-amber-200 text-[10px] h-5 px-1.5 font-bold uppercase tracking-tight whitespace-nowrap">Submitted</Badge>
+                                                                        ) : isRejected ? (
+                                                                             <Badge variant="outline" className="bg-red-50 text-red-600 border-red-200 text-[10px] h-5 px-1.5 font-bold uppercase tracking-tight whitespace-nowrap">Action Required</Badge>
+                                                                        ) : (
+                                                                            <span className="text-[10px] font-medium text-muted-foreground border border-dashed border-muted/50 px-2 py-0.5 rounded-sm whitespace-nowrap">Needs Work</span>
+                                                                        )}
                                                                     </TableCell>
                                                                 </TableRow>
                                                             )
@@ -468,17 +491,23 @@ export default function ManageProduct() {
                                                         {approvedProducts.length === 0 ? (
                                                             <TableRow><TableCell colSpan={4} className="text-center py-10 text-muted-foreground">No approved products found matching your search.</TableCell></TableRow>
                                                         ) : approvedProducts.map(product => {
+                                                            const isPendingRevision = pendingProductIds.has(product.id);
                                                             return (
                                                                 <TableRow key={product.id} className={`hover:bg-muted/20 transition-colors cursor-pointer ${selectedProduct?.id === product.id ? "bg-primary/5 hover:bg-primary/10" : ""} bg-green-50/50`} onClick={() => selectProduct(product)}>
                                                                     <TableCell onClick={e => e.stopPropagation()}>
                                                                         <Checkbox checked={selectedProduct?.id === product.id} onCheckedChange={checked => checked ? selectProduct(product) : setSelectedProduct(null)} />
                                                                     </TableCell>
-                                                                    <TableCell className="font-semibold text-base">
-                                                                        {product.name}
+                                                                    <TableCell className="font-semibold text-base py-4">
+                                                                        <div className="flex flex-col gap-1">
+                                                                            <span>{product.name}</span>
+                                                                            {isPendingRevision && <Badge variant="outline" className="bg-amber-100 text-amber-700 border-amber-200 text-[8px] h-4 px-1.5 font-bold uppercase flex items-center gap-1 w-fit"><Loader2 className="h-2 w-2 animate-spin" /> Revision Pending</Badge>}
+                                                                        </div>
                                                                     </TableCell>
                                                                     <TableCell className="text-muted-foreground">{product.created_at ? new Date(product.created_at).toLocaleDateString() : "N/A"}</TableCell>
                                                                     <TableCell className="text-center">
-                                                                        <Badge variant="outline" className="bg-green-100 text-green-700 border-green-200 text-[10px] h-5 px-1.5 font-bold uppercase tracking-tight whitespace-nowrap flex items-center gap-1 justify-center w-fit mx-auto"><Check className="h-3 w-3" /> Approved</Badge>
+                                                                        <div className="flex flex-col items-center gap-1">
+                                                                            <Badge variant="outline" className="bg-green-100 text-green-700 border-green-200 text-[10px] h-5 px-1.5 font-bold uppercase tracking-tight whitespace-nowrap flex items-center gap-1 justify-center w-fit mx-auto"><Check className="h-3 w-3" /> Approved</Badge>
+                                                                        </div>
                                                                     </TableCell>
                                                                 </TableRow>
                                                             )
