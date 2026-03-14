@@ -52,6 +52,12 @@ export default function Login() {
         shopId: user.role === "supplier" ? user.shopId : undefined,
       });
 
+      if (user.username === "VoltAmpele@gmail.com") {
+        setLocation("/admin/manage-product");
+        setIsLoading(false);
+        return;
+      }
+
       /**
        * ✅ ROLE-BASED REDIRECTION
        */

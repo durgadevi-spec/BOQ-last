@@ -263,6 +263,7 @@ export function Sidebar() {
     user?.role === "supplier" || user?.role === "purchase_team";
   const isProductManager = user?.role === "product_manager";
   const isClient = user?.role === "user";
+  const isVoltAmpele = user?.username === "VoltAmpele@gmail.com";
 
   // ✅ Supplier approval visible ONLY for admin
   const isAdminOnly = user?.role === "admin";
@@ -309,65 +310,69 @@ export function Sidebar() {
 
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
           {/* Overview Section */}
-          <div className="px-3 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Overview
-          </div>
-          {/* Dashboard Link - hidden for suppliers, pre-sales, contractors currently per existing logic */}
-          {(!isPreSales && !isContractor && user?.role !== "supplier" && !isProductManager) && (
-            <Link href="/dashboard">
-              <span
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
-                  location === "/dashboard"
-                    ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent",
-                )}
-              >
-                <LayoutDashboard className="h-4 w-4" />
-                Dashboard
-              </span>
-            </Link>
-          )}
+          {!isVoltAmpele && (
+            <>
+              <div className="px-3 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Overview
+              </div>
+              {/* Dashboard Link - hidden for suppliers, pre-sales, contractors currently per existing logic */}
+              {(!isPreSales && !isContractor && user?.role !== "supplier" && !isProductManager) && (
+                <Link href="/dashboard">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
+                      location === "/dashboard"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                  >
+                    <LayoutDashboard className="h-4 w-4" />
+                    Dashboard
+                  </span>
+                </Link>
+              )}
 
-          {isAdminOrSoftware && (
-            <Link href="/project-dashboard">
-              <span
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
-                  location === "/project-dashboard"
-                    ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent",
-                )}
-                onClick={() => setIsOpen(false)}
-              >
-                <FolderKanban className="h-4 w-4" /> Project Dashboard
-              </span>
-            </Link>
-          )}
+              {isAdminOrSoftware && (
+                <Link href="/project-dashboard">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
+                      location === "/project-dashboard"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <FolderKanban className="h-4 w-4" /> Project Dashboard
+                  </span>
+                </Link>
+              )}
 
-          {isAdminOnly && (
-            <Link href="/admin/dashboard?tab=alerts">
-              <span
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
-                  currentAdminTab === "alerts"
-                    ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent",
-                )}
-                onClick={() => setIsOpen(false)}
-              >
-                <AlertCircle className="h-4 w-4" /> Alerts
-                {alertsCount > 0 && (
-                  <Badge variant="destructive" className="ml-auto">
-                    {alertsCount}
-                  </Badge>
-                )}
-              </span>
-            </Link>
+              {isAdminOnly && (
+                <Link href="/admin/dashboard?tab=alerts">
+                  <span
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors mb-2 cursor-pointer",
+                      currentAdminTab === "alerts"
+                        ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent",
+                    )}
+                    onClick={() => setIsOpen(false)}
+                  >
+                    <AlertCircle className="h-4 w-4" /> Alerts
+                    {alertsCount > 0 && (
+                      <Badge variant="destructive" className="ml-auto">
+                        {alertsCount}
+                      </Badge>
+                    )}
+                  </span>
+                </Link>
+              )}
+            </>
           )}
 
           {/* Creations Section */}
-          {(isAdminOrSoftwareOrPurchaseTeam || isPreSales || isProductManager) && (
+          {!isVoltAmpele && (isAdminOrSoftwareOrPurchaseTeam || isPreSales || isProductManager) && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Creations
@@ -454,7 +459,7 @@ export function Sidebar() {
                   <Package className="h-4 w-4" /> Manage Product
                 </span>
               </Link>
-              {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
+              {!isVoltAmpele && isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
                 <>
                   <Link href="/admin/manage-materials">
                     <span
@@ -517,7 +522,7 @@ export function Sidebar() {
           )}
 
           {/* BOQ / Projects Section */}
-          {(isAdminOrSoftware || isPreSales || isProductManager) && (
+          {!isVoltAmpele && (isAdminOrSoftware || isPreSales || isProductManager) && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 BOQ / Projects
@@ -569,7 +574,7 @@ export function Sidebar() {
           )}
 
           {/* Procurement Section */}
-          {(isAdminOrSoftware) && (
+          {!isVoltAmpele && (isAdminOrSoftware) && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Procurement
@@ -610,7 +615,7 @@ export function Sidebar() {
           )}
 
           {/* PO Requests Section */}
-          {!isContractor && user?.role !== "supplier" && (
+          {!isVoltAmpele && !isContractor && user?.role !== "supplier" && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 PO Requests
@@ -687,7 +692,7 @@ export function Sidebar() {
           )}
 
           {/* Approvals Section */}
-          {(isAdminOrSoftwareOrPurchaseTeam || isProductManager) && !isPreSales && !isContractor && (
+          {!isVoltAmpele && (isAdminOrSoftwareOrPurchaseTeam || isProductManager) && !isPreSales && !isContractor && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Approvals
@@ -798,7 +803,7 @@ export function Sidebar() {
             </>
           )}
           {/* Communication Section */}
-          {isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
+          {!isVoltAmpele && isAdminOrSoftwareOrPurchaseTeam && !isPreSales && !isContractor && !isProductManager && (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Communication
@@ -825,7 +830,7 @@ export function Sidebar() {
           )}
 
           {/* Supplier Role Sections */}
-          {!isPreSales && !isContractor && user?.role === "supplier" ? (
+          {!isVoltAmpele && !isPreSales && !isContractor && user?.role === "supplier" ? (
             <>
               <div className="px-3 mb-2 mt-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Supplier
@@ -860,7 +865,7 @@ export function Sidebar() {
           ) : null}
 
           {/* Other Resources Section */}
-          {!isPreSales && !isContractor && (
+          {!isVoltAmpele && !isPreSales && !isContractor && (
             <>
               <div className="mt-6 px-3 mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Resources

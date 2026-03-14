@@ -219,6 +219,11 @@ export default function Dashboard() {
       return;
     }
 
+    if (user.username === "VoltAmpele@gmail.com") {
+      setLocation("/admin/manage-product");
+      return;
+    }
+
     // Redirect to role-specific dashboards
     switch (user.role) {
       case 'admin':
