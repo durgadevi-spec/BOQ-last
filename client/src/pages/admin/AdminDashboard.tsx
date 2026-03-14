@@ -1308,28 +1308,13 @@ export default function AdminDashboard() {
 
   const canAccessSupport = user?.role === "supplier" || user?.role === "user";
 
-  const isAdminOrSoftwareTeam =
-    user?.role === "admin" || user?.role === "software_team";
+  const isVoltAmpele = user?.username === "VoltAmpele@gmail.com";
 
-  const canViewCategories =
-    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team" || user?.role === "pre_sales" || user?.role === "product_manager";
-
-  const canManageCategories =
-    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team" || user?.role === "pre_sales" || user?.role === "product_manager";
-
-  const canCreateProduct = canManageCategories || user?.role === "pre_sales";
-
-  // Allow presales users to manage products and subcategories (but not top-level categories)
-  const canManageProducts = canManageCategories || user?.role === "pre_sales";
-  const canManageSubcategories = canManageCategories || user?.role === "pre_sales";
-
-  // Permission for viewing all tabs and edit/delete for admin, software_team, and purchase_team
-  const canEditDelete =
-    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team";
-
-  // Permission for approve/reject - Admin, Software Team, and Purchase Team
   const canApproveReject =
-    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team";
+    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team" || isVoltAmpele;
+
+  const canEditDelete =
+    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team" || isVoltAmpele;
 
   const isProductManager = user?.role === "product_manager";
 
@@ -1342,9 +1327,24 @@ export default function AdminDashboard() {
       if (t) return t;
     }
     // default to dashboard view
-    if (user?.role === "product_manager") return "create-product";
+    if (user?.role === "product_manager" || isVoltAmpele) return "create-product";
     return "dashboard";
   };
+
+  const isAdminOrSoftwareTeam =
+    user?.role === "admin" || user?.role === "software_team";
+
+  const canViewCategories =
+    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team" || user?.role === "pre_sales" || user?.role === "product_manager" || isVoltAmpele;
+
+  const canManageCategories =
+    user?.role === "admin" || user?.role === "software_team" || user?.role === "purchase_team" || user?.role === "pre_sales" || user?.role === "product_manager" || isVoltAmpele;
+
+  const canCreateProduct = canManageCategories || user?.role === "pre_sales" || isVoltAmpele;
+
+  // Allow presales users to manage products and subcategories (but not top-level categories)
+  const canManageProducts = canManageCategories || user?.role === "pre_sales" || isVoltAmpele;
+  const canManageSubcategories = canManageCategories || user?.role === "pre_sales" || isVoltAmpele;
 
   const [activeTab, setActiveTab] = useState<string>(computeTab());
 
@@ -1366,15 +1366,15 @@ export default function AdminDashboard() {
     const origReplace = history.replaceState;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (history as any).pushState = function (...args: any[]) {
-      const res = origPush.apply(this, args);
+    (history as any).pushState = function (data: any, unused: string, url?: string | URL | null) {
+      const res = origPush.apply(this, [data, unused, url]);
       window.dispatchEvent(new PopStateEvent("popstate"));
       return res;
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (history as any).replaceState = function (...args: any[]) {
-      const res = origReplace.apply(this, args);
+    (history as any).replaceState = function (data: any, unused: string, url?: string | URL | null) {
+      const res = origReplace.apply(this, [data, unused, url]);
       window.dispatchEvent(new PopStateEvent("popstate"));
       return res;
     };
@@ -2804,7 +2804,8 @@ export default function AdminDashboard() {
                           code: "",
                           vendorCategory: "",
                           taxCodeType: null,
-                          taxCodeValue: ""
+                          taxCodeValue: "",
+                          technicalspecification: ""
                         });
                         toast({
                           title: "Form Cleared",
