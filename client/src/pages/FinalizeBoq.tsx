@@ -1858,12 +1858,12 @@ export default function FinalizeBoq() {
         "Description": "Description",
         "HSN": "HSN",
         "SAC": "SAC",
-        "Rate": "Rate (₹)",
+        "Rate": "Rate",
         "Unit": "Unit",
         "Qty": "Qty",
-        "Total": "Total (₹)",
-        "Override Rate": "Override Rate (₹)",
-        "Override Total": "Override Total (₹)"
+        "Total": "Total",
+        "Override Rate": "O.Rate",
+        "Override Total": "O.Total"
       };
 
       const headers = selectedPdfExportCols.map(colName => headerMap[colName] || colName);
@@ -2065,16 +2065,70 @@ export default function FinalizeBoq() {
         colStyles[snoIdx] = { ...colStyles[snoIdx], cellWidth: 10 };
       }
 
+      const numCols = selectedPdfExportCols.length;
+      // Dynamically shrink font as columns grow - much more generous now
+      const dynFontSize = numCols <= 6 ? 10 : numCols <= 10 ? 9 : numCols <= 14 ? 8 : numCols <= 20 ? 7 : 6;
+
+      // Available width for the table
+      const tableAvailW = pageWidth - 20; // margin 10 each side
+
+      // Per-column suggested widths (mm)
+      const colBaseWidths: Record<string, number> = {
+        "S.No": 8,
+        "Product / Material": 35,
+        "Description": 45,
+        "HSN": 15,
+        "SAC": 15,
+        "Unit": 12,
+        "Qty": 12,
+        "Rate": 20,
+        "Total": 22,
+        "Override Rate": 20,
+        "Override Total": 22,
+      };
+
+      const totalBaseW = selectedPdfExportCols.reduce((sum, col) => {
+        return sum + (colBaseWidths[col] ?? 20);
+      }, 0);
+
+      // If we have room, we don't need to scale down. If we are over, scale precisely.
+      const scale = totalBaseW > tableAvailW ? tableAvailW / totalBaseW : 1;
+
+      const dynColStyles: any = {};
+      selectedPdfExportCols.forEach((col, i) => {
+        const calculatedW = (colBaseWidths[col] ?? 20) * scale;
+
+        let halign: 'left' | 'center' | 'right' = 'left';
+        if (["Rate", "Total", "Override Rate", "Override Total", ...allCols.map(c => c.name)].includes(col)) {
+          halign = 'right';
+        } else if (["S.No", "Qty", "Unit", "HSN", "SAC"].includes(col)) {
+          halign = 'center';
+        }
+
+        dynColStyles[i] = {
+          cellWidth: totalBaseW > tableAvailW ? calculatedW : 'auto',
+          halign
+        };
+
+        // Always keep S.No narrow if it exists
+        if (col === "S.No") {
+          dynColStyles[i].cellWidth = 8;
+        }
+      });
+
       // @ts-ignore - autotable types
       autoTable(doc, {
         head: [headers],
         body: body,
         startY: headerBoxY + headerBoxH, // attach directly to header box
         margin: { left: 10, right: 10 },
+        tableWidth: tableAvailW,
         styles: {
-          fontSize: 8,
+          fontSize: dynFontSize,
           lineColor: [0, 0, 0],
           lineWidth: 0.3,
+          overflow: 'linebreak',
+          cellPadding: 1.5,
         },
         headStyles: {
           fillColor: [40, 40, 40],
@@ -2082,22 +2136,25 @@ export default function FinalizeBoq() {
           fontStyle: "bold",
           lineColor: [0, 0, 0],
           lineWidth: 0.4,
+          fontSize: dynFontSize,
         },
         bodyStyles: {
           lineColor: [0, 0, 0],
           lineWidth: 0.3,
+          minCellHeight: 6,
         },
         theme: "grid",
+        showFoot: 'lastPage',
         foot: [footerRow, grandTotalRow],
         footStyles: {
           fillColor: [220, 220, 220],
           textColor: [0, 0, 0],
           fontStyle: "bold",
-          fontSize: 8,
+          fontSize: dynFontSize,
           lineColor: [0, 0, 0],
           lineWidth: 0.4,
         },
-        columnStyles: colStyles,
+        columnStyles: dynColStyles,
         tableLineColor: [0, 0, 0],
         tableLineWidth: 0.5,
       });
@@ -2205,7 +2262,7 @@ export default function FinalizeBoq() {
                   <SelectTrigger className="bg-white border-slate-200">
                     <SelectValue placeholder="Select project" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-[300px] overflow-y-auto">
                     {projects.map((p) => (
                       <SelectItem value={p.id} key={p.id}>
                         {p.name}
@@ -2230,7 +2287,7 @@ export default function FinalizeBoq() {
                       <SelectTrigger className="bg-white border-slate-200">
                         <SelectValue placeholder="Select BOM" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-[300px] overflow-y-auto">
                         {filteredBomVersions.map((v) => (
                           <SelectItem value={v.id} key={v.id}>
                             V{v.version_number} ({v.status === "approved" ? "Appr" : v.status === "submitted" ? "Lock" : "Draft"})
@@ -2327,7 +2384,7 @@ export default function FinalizeBoq() {
                       <SelectTrigger className="bg-white border-slate-200">
                         <SelectValue placeholder="Select BOQ" />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-[300px] overflow-y-auto">
                         {filteredBoqVersions.length === 0 ? (
                           <div className="p-2 text-xs text-slate-400 text-center">No BOQ versions</div>
                         ) : (
@@ -3500,7 +3557,7 @@ export default function FinalizeBoq() {
                         <SelectTrigger className="h-8 bg-gray-700/50 border-gray-600 text-white text-[11px] font-semibold w-full">
                           <SelectValue placeholder="Select summary column" />
                         </SelectTrigger>
-                        <SelectContent className="bg-gray-800 text-white border-gray-700">
+                        <SelectContent className="bg-gray-800 text-white border-gray-700 max-h-[300px] overflow-y-auto">
                           <SelectItem value="Total Value (₹)">Standard Total</SelectItem>
                           <SelectItem value="Override Total">Override Total</SelectItem>
                           {allCols.map(col => (
