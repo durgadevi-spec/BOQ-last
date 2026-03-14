@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Loader2, Plus, ArrowRight, ArrowLeft, Trash2, Edit, Check, XCircle, Layers } from "lucide-react";
+import { Search, Loader2, Plus, ArrowRight, ArrowLeft, Trash2, Edit, Check, XCircle, Layers, Copy } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import apiFetch from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -63,6 +63,9 @@ export default function ManageProduct() {
     const [productDescription, setProductDescription] = useState("");
     const [compactMode, setCompactMode] = useState(false);
     const [step3MaterialSearch, setStep3MaterialSearch] = useState("");
+    const [cloneSearch, setCloneSearch] = useState("");
+    const [isCloneDialogOpen, setIsCloneDialogOpen] = useState(false);
+    const [targetProductForClone, setTargetProductForClone] = useState<Product | null>(null);
     const { toast } = useToast();
 
     const resetSelection = () => {
@@ -139,6 +142,17 @@ export default function ManageProduct() {
     const approvedProducts = useMemo(() => {
         return filteredProducts.filter(p => approvedProductIds.has(p.id));
     }, [filteredProducts, approvedProductIds]);
+
+    const allApprovedConfigs = useMemo(() => {
+        if (!allApprovals) return [];
+        return (allApprovals as any[]).filter(a => a.status === "approved");
+    }, [allApprovals]);
+
+    const filteredCloneConfigs = useMemo(() => {
+        return allApprovedConfigs.filter(c => 
+            fuzzySearch(cloneSearch, [c.product_name || "", c.config_name || ""])
+        );
+    }, [allApprovedConfigs, cloneSearch]);
 
     const needsWorkProducts = useMemo(() => {
         return filteredProducts.filter(p => !approvedProductIds.has(p.id));
@@ -320,6 +334,41 @@ export default function ManageProduct() {
         finally { setIsLoadingConfigs(false); }
     };
 
+    const handleCloneConfig = async (config: any) => {
+        try {
+            setIsLoadingConfigs(true);
+            const res = await apiFetch(`/api/product-approvals/${config.id}`);
+            if (res.ok) {
+                const d = await res.json();
+                
+                // Set the target product as selected
+                const target = targetProductForClone || (productsData || []).find((p: any) => p.id === config.product_id);
+                if (target) {
+                    setSelectedProduct(target);
+                    // Load the config into the target product
+                    applyConfig(d.approval, d.items, `Cloned configuration from "${config.product_name}" to "${target.name}"`);
+                }
+                
+                setIsCloneDialogOpen(false);
+                setTargetProductForClone(null);
+                setStep(3); // Go to detail step after cloning
+            } else {
+                throw new Error("Failed to load details");
+            }
+        } catch (e) {
+            console.error(e);
+            toast({ title: "Error", description: "Failed to clone configuration.", variant: "destructive" });
+        } finally {
+            setIsLoadingConfigs(false);
+        }
+    };
+
+    const openCloneDialog = (e: React.MouseEvent, product: Product) => {
+        e.stopPropagation();
+        setTargetProductForClone(product);
+        setIsCloneDialogOpen(true);
+    };
+
     const deleteConfig = async (configId: number) => {
         if (!confirm("Delete this configuration?")) return;
         try {
@@ -415,6 +464,59 @@ export default function ManageProduct() {
                                         <Input placeholder="Search by name..." className="pl-10 h-10" value={productSearch} onChange={e => setProductSearch(e.target.value)} />
                                     </div>
                                 </div>
+
+                                <Dialog open={isCloneDialogOpen} onOpenChange={(open) => { setIsCloneDialogOpen(open); if (!open) setTargetProductForClone(null); }}>
+                                    <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col p-0 overflow-hidden border-none shadow-2xl">
+                                        <DialogHeader className="p-6 bg-primary/5 border-b">
+                                            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                                                <Copy className="h-5 w-5 text-primary" />
+                                                Clone to {targetProductForClone?.name}
+                                            </DialogTitle>
+                                            <p className="text-xs text-muted-foreground mt-1">Select an existing approved configuration to copy its materials and settings into this product.</p>
+                                        </DialogHeader>
+                                        <div className="p-6 space-y-4 flex-1 flex flex-col min-h-0">
+                                            <div className="relative">
+                                                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                                                <Input 
+                                                    placeholder="Search approved configurations..." 
+                                                    className="pl-10 h-10 border-primary/10 shadow-sm"
+                                                    value={cloneSearch}
+                                                    onChange={e => setCloneSearch(e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-2 min-h-[300px]">
+                                                {filteredCloneConfigs.length === 0 ? (
+                                                    <div className="flex flex-col items-center justify-center py-20 text-center space-y-3">
+                                                        <Search className="h-10 w-10 text-muted-foreground opacity-20" />
+                                                        <p className="text-sm font-medium text-muted-foreground">No approved configurations found</p>
+                                                    </div>
+                                                ) : (
+                                                    filteredCloneConfigs.map(config => (
+                                                        <div 
+                                                            key={config.id} 
+                                                            className="flex items-center justify-between p-4 bg-white rounded-xl border-2 border-slate-50 hover:border-primary/20 hover:bg-slate-50/50 transition-all cursor-pointer group"
+                                                            onClick={() => handleCloneConfig(config)}
+                                                        >
+                                                            <div className="space-y-1">
+                                                                <div className="font-bold text-sm text-slate-800 group-hover:text-primary transition-colors">
+                                                                    {config.product_name}
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-xs font-semibold text-muted-foreground">{config.config_name || "Default Config"}</span>
+                                                                    <Badge variant="outline" className="h-4 text-[8px] uppercase px-1.5 font-bold bg-green-50 text-green-700 border-green-200">Approved</Badge>
+                                                                </div>
+                                                                <div className="text-[10px] text-muted-foreground mt-1">
+                                                                    Updated: {new Date(config.updated_at || config.created_at).toLocaleDateString()} • {config.total_cost ? `₹${Number(config.total_cost).toLocaleString()}` : 'N/A'}
+                                                                </div>
+                                                            </div>
+                                                            <Button variant="ghost" size="sm" className="h-8 font-bold text-primary group-hover:bg-primary group-hover:text-white transition-all">Select</Button>
+                                                        </div>
+                                                    ))
+                                                )}
+                                            </div>
+                                        </div>
+                                    </DialogContent>
+                                </Dialog>
                                 {loadingProducts ? (
                                     <div className="flex flex-col items-center justify-center p-20 space-y-4">
                                         <Loader2 className="h-10 w-10 animate-spin text-primary" />
@@ -436,11 +538,12 @@ export default function ManageProduct() {
                                                             <TableHead className="font-bold">Product Name</TableHead>
                                                             <TableHead className="font-bold">Created Date</TableHead>
                                                             <TableHead className="font-bold text-center w-[120px]">Status</TableHead>
+                                                            <TableHead className="w-[100px]"></TableHead>
                                                         </TableRow>
                                                     </TableHeader>
                                                     <TableBody>
                                                         {needsWorkProducts.length === 0 ? (
-                                                            <TableRow><TableCell colSpan={4} className="text-center py-10 text-muted-foreground">No products currently need work.</TableCell></TableRow>
+                                                            <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">No products currently need work.</TableCell></TableRow>
                                                         ) : needsWorkProducts.map(product => {
                                                             const isPending = pendingProductIds.has(product.id);
                                                             const isRejected = rejectedProductIds.has(product.id);
@@ -468,6 +571,17 @@ export default function ManageProduct() {
                                                                             <span className="text-[10px] font-medium text-muted-foreground border border-dashed border-muted/50 px-2 py-0.5 rounded-sm whitespace-nowrap">Needs Work</span>
                                                                         )}
                                                                     </TableCell>
+                                                                    <TableCell onClick={e => e.stopPropagation()}>
+                                                                        <Button 
+                                                                            variant="ghost" 
+                                                                            size="sm" 
+                                                                            className="h-8 w-8 p-0 text-primary hover:bg-primary hover:text-white rounded-full transition-all" 
+                                                                            title="Clone from another config"
+                                                                            onClick={(e) => openCloneDialog(e, product)}
+                                                                        >
+                                                                            <Copy className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </TableCell>
                                                                 </TableRow>
                                                             )
                                                         })}
@@ -485,11 +599,12 @@ export default function ManageProduct() {
                                                             <TableHead className="font-bold">Product Name</TableHead>
                                                             <TableHead className="font-bold">Created Date</TableHead>
                                                             <TableHead className="font-bold text-center w-[120px]">Status</TableHead>
+                                                            <TableHead className="w-[100px]"></TableHead>
                                                         </TableRow>
                                                     </TableHeader>
                                                     <TableBody>
                                                         {approvedProducts.length === 0 ? (
-                                                            <TableRow><TableCell colSpan={4} className="text-center py-10 text-muted-foreground">No approved products found matching your search.</TableCell></TableRow>
+                                                            <TableRow><TableCell colSpan={5} className="text-center py-10 text-muted-foreground">No approved products found matching your search.</TableCell></TableRow>
                                                         ) : approvedProducts.map(product => {
                                                             const isPendingRevision = pendingProductIds.has(product.id);
                                                             return (
@@ -508,6 +623,17 @@ export default function ManageProduct() {
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <Badge variant="outline" className="bg-green-100 text-green-700 border-green-200 text-[10px] h-5 px-1.5 font-bold uppercase tracking-tight whitespace-nowrap flex items-center gap-1 justify-center w-fit mx-auto"><Check className="h-3 w-3" /> Approved</Badge>
                                                                         </div>
+                                                                    </TableCell>
+                                                                    <TableCell onClick={e => e.stopPropagation()}>
+                                                                        <Button 
+                                                                            variant="ghost" 
+                                                                            size="sm" 
+                                                                            className="h-8 w-8 p-0 text-primary hover:bg-primary hover:text-white rounded-full transition-all" 
+                                                                            title="Clone from another config"
+                                                                            onClick={(e) => openCloneDialog(e, product)}
+                                                                        >
+                                                                            <Copy className="h-4 w-4" />
+                                                                        </Button>
                                                                     </TableCell>
                                                                 </TableRow>
                                                             )
